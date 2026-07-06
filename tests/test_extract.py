@@ -332,6 +332,7 @@ class TestStructure:
     def test_aside_prose_splits_paragraphs_on_indent(self) -> None:
         page = FakePage(
             [
+                body("Lauftext.", y0=50),
                 line(span("Erster Kastenabsatz.", "EuclidCircularB-Regular", 8.5), y0=100),
                 line(
                     span("Zweiter Kastenabsatz.", "EuclidCircularB-Regular", 8.5),
@@ -341,7 +342,7 @@ class TestStructure:
             ]
         )
         chapter = extract_chapter([page])
-        (aside,) = chapter.blocks
+        _body_block, aside = chapter.blocks
         assert isinstance(aside, Aside)
         assert [paragraph_text(block) for block in aside.blocks] == [
             "Erster Kastenabsatz.",
@@ -372,13 +373,14 @@ class TestStructure:
     def test_aside_prose_before_heading(self) -> None:
         page = FakePage(
             [
+                body("Lauftext.", y0=50),
                 line(span("Einleitung des Kastens.", "EuclidCircularB-Regular", 8.5), y0=100),
                 line(span("Kastentitel", "EuclidCircularB-Semibold", 9.5), y0=120),
                 line(span("Haupttextkasten.", "EuclidCircularB-Regular", 8.5), y0=140),
             ]
         )
         chapter = extract_chapter([page])
-        (aside,) = chapter.blocks
+        _body_block, aside = chapter.blocks
         assert isinstance(aside, Aside)
         assert [type(block).__name__ for block in aside.blocks] == [
             "Paragraph",
@@ -386,24 +388,37 @@ class TestStructure:
             "Paragraph",
         ]
 
-    def test_unknown_styles_warn_and_fail_open(self) -> None:
+    def test_unknown_series_style_fails_open_to_body(self) -> None:
         page = FakePage(
             [
-                line(span("Grosser Fremdtext", "Helvetica", 10.0), y0=100),
-                line(span("kleiner fremdtext", "Helvetica", 6.0), y0=120),
+                line(span("Seltsame Grösse im Buchfont", "Practice-Regular", 8.7), y0=100),
+                line(span("winzig im Buchfont", "Practice-Regular", 6.5), y0=120),
             ]
         )
         chapter = extract_chapter([page])
         (block,) = chapter.blocks
-        assert paragraph_text(block) == "Grosser Fremdtext"
+        assert paragraph_text(block) == "Seltsame Grösse im Buchfont"
         assert len(chapter.warnings) == 2
-        assert "unknown style Helvetica" in chapter.warnings[0]
+        assert "unknown style Practice-Regular" in chapter.warnings[0]
+
+    def test_foreign_font_ocr_text_is_dropped(self) -> None:
+        page = FakePage(
+            [
+                body("Echter Lauftext.", y0=100),
+                line(span("Schematische Darstellung", "Helvetica", 9.1), y0=200),
+            ]
+        )
+        chapter = extract_chapter([page])
+        (block,) = chapter.blocks
+        assert paragraph_text(block) == "Echter Lauftext."
+        assert any("unknown style Helvetica" in w for w in chapter.warnings)
 
 
 class TestNotes:
     def test_notes_parse_and_continue(self) -> None:
         page = FakePage(
             [
+                body("Lauftext.", y0=50),
                 note_start(1, "Franke 1989.", y0=100),
                 note_start(2, f"Rentzel; Pümpin; Brönni{SOFT_HYPHEN}", y0=120),
                 note_cont("mann 2015.", y0=130),
@@ -418,6 +433,7 @@ class TestNotes:
     def test_note_columns_read_left_column_first(self) -> None:
         page = FakePage(
             [
+                body("Lauftext.", y0=50),
                 note_start(3, "Rechte Spalte.", x0=191.8, y0=100),
                 note_start(1, "Linke Spalte oben.", x0=48.0, y0=100),
                 note_start(2, "Linke Spalte unten.", x0=48.0, y0=120),
@@ -427,7 +443,7 @@ class TestNotes:
         assert [note.number for note in chapter.notes] == [1, 2, 3]
 
     def test_notes_span_pages(self) -> None:
-        first = FakePage([note_start(1, "Erste Seite,", y0=100)])
+        first = FakePage([body("Lauftext.", y0=50), note_start(1, "Erste Seite,", y0=100)])
         second = FakePage(
             [
                 note_cont("zweite Seite.", y0=100),
@@ -443,6 +459,7 @@ class TestNotes:
     def test_column_without_starts_is_skipped(self) -> None:
         page = FakePage(
             [
+                body("Lauftext.", y0=50),
                 note_start(1, "Echte Note.", x0=48.0, y0=100),
                 note_cont("Diagrammbeschriftung", x0=300.0, y0=200),
                 note_cont("noch eine Beschriftung", x0=300.0, y0=210),
@@ -455,6 +472,7 @@ class TestNotes:
     def test_orphan_continuation_warns(self) -> None:
         page = FakePage(
             [
+                body("Lauftext.", y0=50),
                 note_cont("verwaiste Fortsetzung", y0=100),
                 note_start(1, "Erste Note.", y0=120),
             ]
@@ -466,6 +484,7 @@ class TestNotes:
     def test_bold_start_without_number_treated_as_continuation(self) -> None:
         page = FakePage(
             [
+                body("Lauftext.", y0=50),
                 note_start(1, "Anfang.", y0=100),
                 line(span("Fortsetzung fett", "Practice-Bold", 5.5), x0=48.0, y0=120),
             ]
