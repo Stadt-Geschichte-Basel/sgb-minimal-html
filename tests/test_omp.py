@@ -112,31 +112,39 @@ def test_upload_and_attach(tmp_path: Path) -> None:
     def handler(request: httpx2.Request) -> httpx2.Response:
         seen.append(request)
         if request.method == "POST":
-            assert b"text/html" in request.read()
-            return httpx2.Response(200, json={"id": 4711})
+            content = request.read()
+            assert b"text/html" in content
+            # Association is set at upload time; a name field would 500.
+            assert b'name="assocType"' in content
+            assert b'name="assocId"' in content
+            assert b'name="genreId"' in content
+            assert b'name="name"' not in content
+            return httpx2.Response(200, json={"id": 4711, "assocId": 96})
         assert request.method == "PUT"
+        assert request.url.params["stageId"] == "5"
         payload = json.loads(request.read())
-        assert payload["assocType"] == 521
-        assert payload["assocId"] == 96
         assert payload["chapterId"] == 356
-        assert payload["genreId"] == 58
         assert payload["viewable"] is True
-        return httpx2.Response(200, json={"id": 4711, "assocId": 96})
+        assert payload["salesType"] == "openAccess"
+        return httpx2.Response(200, json={"id": 4711, "assocId": 96, "chapterId": 356})
 
     client = make_client(handler)
-    uploaded = client.upload_proof_file(85, html_file, html_file.name)
-    result = client.attach_to_format(85, uploaded["id"], 96, 356, 58)
-    assert result["assocId"] == 96
+    uploaded = client.upload_proof_file(85, html_file, html_file.name, 96, 58)
+    assert uploaded["assocId"] == 96
+    result = client.attach_to_chapter(85, uploaded["id"], 356)
+    assert result["chapterId"] == 356
     assert seen[0].url.path.endswith("/submissions/85/files")
     assert seen[1].url.path.endswith("/submissions/85/files/4711")
 
 
-def test_attach_without_genre_omits_field(tmp_path: Path) -> None:
+def test_upload_without_genre_omits_field(tmp_path: Path) -> None:
+    html_file = tmp_path / "chapter.html"
+    html_file.write_text("<!DOCTYPE html>", encoding="utf-8")
+
     def handler(request: httpx2.Request) -> httpx2.Response:
-        payload = json.loads(request.read())
-        assert "genreId" not in payload
-        return httpx2.Response(200, json=payload)
+        assert b'name="genreId"' not in request.read()
+        return httpx2.Response(200, json={"id": 4711})
 
     client = make_client(handler)
-    result = client.attach_to_format(85, 4711, 96, 356, None)
-    assert result["assocId"] == 96
+    uploaded = client.upload_proof_file(85, html_file, html_file.name, 96, None)
+    assert uploaded["id"] == 4711

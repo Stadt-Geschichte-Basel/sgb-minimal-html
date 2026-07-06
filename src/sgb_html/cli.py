@@ -228,11 +228,11 @@ def upload(
                 file=job.html_name,
             )
             continue
-        uploaded = client.upload_proof_file(job.submission.id, out, job.html_name)
-        file_id = uploaded["id"]
-        client.attach_to_format(
-            job.submission.id, file_id, html_format.id, job.chapter.id, genre_id
+        uploaded = client.upload_proof_file(
+            job.submission.id, out, job.html_name, html_format.id, genre_id
         )
+        file_id = uploaded["id"]
+        client.attach_to_chapter(job.submission.id, file_id, job.chapter.id)
         log.info(
             "uploaded",
             doi=job.doi_suffix,

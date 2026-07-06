@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict
 LOCALE = "de"
 FILE_STAGE_PROOF = 10
 ASSOC_TYPE_REPRESENTATION = 521
+WORKFLOW_STAGE_PRODUCTION = 5
 
 
 def _de(value: dict[str, str] | str | None) -> str:
@@ -143,40 +144,52 @@ class OmpClient:
         response.raise_for_status()
         return ApiSubmission.model_validate(response.json())
 
-    def upload_proof_file(self, submission_id: int, path: Path, name: str) -> dict[str, Any]:
-        """Upload an HTML galley file into the proof file stage."""
+    def upload_proof_file(
+        self, submission_id: int, path: Path, name: str, format_id: int, genre_id: int | None
+    ) -> dict[str, Any]:
+        """Upload an HTML galley into the proof stage of a publication format.
+
+        The association with the publication format must be set at upload
+        time; the edit endpoint rejects ``assocType`` changes. A ``name``
+        form field triggers a server error, so the display name comes from
+        the multipart file name.
+        """
+        data = {
+            "fileStage": str(FILE_STAGE_PROOF),
+            "assocType": str(ASSOC_TYPE_REPRESENTATION),
+            "assocId": str(format_id),
+        }
+        if genre_id is not None:
+            data["genreId"] = str(genre_id)
         with path.open("rb") as handle:
             response = self._client.post(
                 f"/submissions/{submission_id}/files",
-                data={"fileStage": str(FILE_STAGE_PROOF), "name": name},
+                data=data,
                 files={"file": (name, handle, "text/html")},
             )
         response.raise_for_status()
         return response.json()
 
     def edit_file(self, submission_id: int, file_id: int, fields: dict[str, Any]) -> dict[str, Any]:
-        response = self._client.put(f"/submissions/{submission_id}/files/{file_id}", json=fields)
+        response = self._client.put(
+            f"/submissions/{submission_id}/files/{file_id}",
+            params={"stageId": WORKFLOW_STAGE_PRODUCTION},
+            json=fields,
+        )
         response.raise_for_status()
         return response.json()
 
-    def attach_to_format(
-        self,
-        submission_id: int,
-        file_id: int,
-        format_id: int,
-        chapter_id: int,
-        genre_id: int | None,
+    def attach_to_chapter(
+        self, submission_id: int, file_id: int, chapter_id: int
     ) -> dict[str, Any]:
-        """Link an uploaded file to a publication format and chapter."""
-        fields: dict[str, Any] = {
-            "assocType": ASSOC_TYPE_REPRESENTATION,
-            "assocId": format_id,
-            "fileStage": FILE_STAGE_PROOF,
-            "chapterId": chapter_id,
-            "viewable": True,
-            "salesType": "openAccess",
-            "directSalesPrice": "0",
-        }
-        if genre_id is not None:
-            fields["genreId"] = genre_id
-        return self.edit_file(submission_id, file_id, fields)
+        """Link an uploaded galley file to its chapter and make it viewable."""
+        return self.edit_file(
+            submission_id,
+            file_id,
+            {
+                "chapterId": chapter_id,
+                "viewable": True,
+                "salesType": "openAccess",
+                "directSalesPrice": "0",
+            },
+        )
