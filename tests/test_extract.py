@@ -170,9 +170,84 @@ class TestParagraphs:
         assert isinstance(block, Paragraph)
         assert block.inlines == [
             TextRun("Die "),
-            TextRun("Rotliegend Brekzie ", italic=True),
-            TextRun("ist hart."),
+            TextRun("Rotliegend Brekzie", italic=True),
+            TextRun(" ist hart."),
         ]
+
+    def test_figure_anchor_spans_are_dropped(self) -> None:
+        page = FakePage(
+            [
+                line(
+                    span("nicht existierte ", "Practice-Regular", 10.4),
+                    span("[7 | 8]", "EuclidCircularB-Semibold", 7.0),
+                    span(". Die Eichenstämme", "Practice-Regular", 10.4),
+                )
+            ]
+        )
+        chapter = extract_chapter([page])
+        (block,) = chapter.blocks
+        assert paragraph_text(block) == "nicht existierte. Die Eichenstämme"
+
+    def test_line_of_only_anchors_is_skipped(self) -> None:
+        page = FakePage(
+            [
+                body("Text davor.", y0=100),
+                line(span("[4]", "EuclidCircularB-Semibold", 7.0), y0=112),
+                body("Text danach.", y0=124),
+            ]
+        )
+        chapter = extract_chapter([page])
+        (block,) = chapter.blocks
+        assert paragraph_text(block) == "Text davor. Text danach."
+
+    def test_isotope_superscript_stays_plain_text(self) -> None:
+        page = FakePage(
+            [
+                line(
+                    span("datieren gemäss ", "Practice-Regular", 10.4),
+                    span("14", "Practice-Regular", 6.06, superscript=True),
+                    span("C-Analysen", "Practice-Regular", 10.4),
+                )
+            ]
+        )
+        chapter = extract_chapter([page])
+        (block,) = chapter.blocks
+        assert isinstance(block, Paragraph)
+        assert block.inlines == [TextRun("datieren gemäss 14C-Analysen")]
+
+    def test_italic_switch_across_lines_keeps_space(self) -> None:
+        page = FakePage(
+            [
+                line(span("kursiv am Ende", "Practice-Italic", 10.4), y0=100),
+                body("regulär weiter.", y0=112),
+            ]
+        )
+        chapter = extract_chapter([page])
+        (block,) = chapter.blocks
+        assert isinstance(block, Paragraph)
+        assert block.inlines == [
+            TextRun("kursiv am Ende ", italic=True),
+            TextRun("regulär weiter."),
+        ]
+
+    def test_en_dash_number_range_joins_without_space(self) -> None:
+        page = FakePage(
+            [
+                body("Seiten 123–", y0=100),
+                body("127 zeigen dies.", y0=112),
+            ]
+        )
+        chapter = extract_chapter([page])
+        (block,) = chapter.blocks
+        assert paragraph_text(block) == "Seiten 123–127 zeigen dies."
+
+    def test_append_line_with_only_dropped_spans_is_noop(self) -> None:
+        from sgb_html.extract import _append_line
+
+        inlines: list = [TextRun("bestehender Text")]
+        anchor_only = RawLine(1, 55.0, 100.0, (RawSpan("[4]", "EuclidCircularB-Semibold", 7.0),))
+        _append_line(inlines, anchor_only)
+        assert inlines == [TextRun("bestehender Text")]
 
     def test_empty_span_is_ignored(self) -> None:
         page = FakePage(
@@ -254,6 +329,46 @@ class TestStructure:
         assert head == Heading("Warteck bleibt", level=3)
         assert paragraph_text(prose) == "Für viele Menschen war die Brauerei fest verbunden."
 
+    def test_aside_prose_splits_paragraphs_on_indent(self) -> None:
+        page = FakePage(
+            [
+                line(span("Erster Kastenabsatz.", "EuclidCircularB-Regular", 8.5), y0=100),
+                line(
+                    span("Zweiter Kastenabsatz.", "EuclidCircularB-Regular", 8.5),
+                    x0=75.0,
+                    y0=112,
+                ),
+            ]
+        )
+        chapter = extract_chapter([page])
+        (aside,) = chapter.blocks
+        assert isinstance(aside, Aside)
+        assert [paragraph_text(block) for block in aside.blocks] == [
+            "Erster Kastenabsatz.",
+            "Zweiter Kastenabsatz.",
+        ]
+
+    def test_aside_waits_for_paragraph_to_close(self) -> None:
+        first = FakePage(
+            [
+                body("Ein Absatz, der über die", y0=100),
+                line(span("Kastentext auf Seite eins.", "EuclidCircularB-Regular", 8.5), y0=300),
+            ]
+        )
+        second = FakePage(
+            [
+                body("Seite läuft und hier endet.", y0=100),
+                body("Neuer Absatz.", x0=85.0, y0=112),
+            ]
+        )
+        chapter = extract_chapter([first, second])
+        kinds = [type(block).__name__ for block in chapter.blocks]
+        assert kinds == ["Paragraph", "Aside", "Paragraph"]
+        assert (
+            paragraph_text(chapter.blocks[0])
+            == "Ein Absatz, der über die Seite läuft und hier endet."
+        )
+
     def test_aside_prose_before_heading(self) -> None:
         page = FakePage(
             [
@@ -313,14 +428,39 @@ class TestNotes:
 
     def test_notes_span_pages(self) -> None:
         first = FakePage([note_start(1, "Erste Seite,", y0=100)])
-        second = FakePage([note_cont("zweite Seite.", y0=100)])
+        second = FakePage(
+            [
+                note_cont("zweite Seite.", y0=100),
+                note_start(2, "Nächste Note.", y0=120),
+            ]
+        )
         chapter = extract_chapter([first, second])
-        assert chapter.notes == [type(chapter.notes[0])(1, "Erste Seite, zweite Seite.")]
+        assert [(n.number, n.text) for n in chapter.notes] == [
+            (1, "Erste Seite, zweite Seite."),
+            (2, "Nächste Note."),
+        ]
+
+    def test_column_without_starts_is_skipped(self) -> None:
+        page = FakePage(
+            [
+                note_start(1, "Echte Note.", x0=48.0, y0=100),
+                note_cont("Diagrammbeschriftung", x0=300.0, y0=200),
+                note_cont("noch eine Beschriftung", x0=300.0, y0=210),
+            ]
+        )
+        chapter = extract_chapter([page])
+        assert [(n.number, n.text) for n in chapter.notes] == [(1, "Echte Note.")]
+        assert any("skipped 2 small-print lines" in w for w in chapter.warnings)
 
     def test_orphan_continuation_warns(self) -> None:
-        page = FakePage([note_cont("verwaiste Fortsetzung", y0=100)])
+        page = FakePage(
+            [
+                note_cont("verwaiste Fortsetzung", y0=100),
+                note_start(1, "Erste Note.", y0=120),
+            ]
+        )
         chapter = extract_chapter([page])
-        assert chapter.notes == []
+        assert [(n.number, n.text) for n in chapter.notes] == [(1, "Erste Note.")]
         assert any("continuation without start" in w for w in chapter.warnings)
 
     def test_bold_start_without_number_treated_as_continuation(self) -> None:
