@@ -211,6 +211,10 @@ def upload(
         if already and not replace:
             log.info("skip_existing", doi=job.doi_suffix, file_id=already[0].id)
             continue
+        if already and not dry_run:
+            for old in already:
+                client.delete_file(job.submission.id, old.id)
+                log.info("deleted_old", doi=job.doi_suffix, file_id=old.id)
         pdf_format = job.publication.format_named("PDF")
         genre_id = None
         if pdf_format:

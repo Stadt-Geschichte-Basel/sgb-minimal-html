@@ -137,6 +137,16 @@ def test_upload_and_attach(tmp_path: Path) -> None:
     assert seen[1].url.path.endswith("/submissions/85/files/4711")
 
 
+def test_delete_file_uses_production_stage() -> None:
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        assert request.method == "DELETE"
+        assert request.url.path.endswith("/submissions/85/files/1570")
+        assert request.url.params["stageId"] == "5"
+        return httpx2.Response(200, json={})
+
+    make_client(handler).delete_file(85, 1570)
+
+
 def test_upload_without_genre_omits_field(tmp_path: Path) -> None:
     html_file = tmp_path / "chapter.html"
     html_file.write_text("<!DOCTYPE html>", encoding="utf-8")

@@ -170,6 +170,13 @@ class OmpClient:
         response.raise_for_status()
         return response.json()
 
+    def delete_file(self, submission_id: int, file_id: int) -> None:
+        response = self._client.delete(
+            f"/submissions/{submission_id}/files/{file_id}",
+            params={"stageId": WORKFLOW_STAGE_PRODUCTION},
+        )
+        response.raise_for_status()
+
     def edit_file(self, submission_id: int, file_id: int, fields: dict[str, Any]) -> dict[str, Any]:
         response = self._client.put(
             f"/submissions/{submission_id}/files/{file_id}",
