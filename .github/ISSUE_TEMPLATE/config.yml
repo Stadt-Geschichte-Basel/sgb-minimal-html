@@ -1,0 +1,8 @@
+contact_links:
+  - name: Are you looking for documentation on sgb-minimal-html?
+    url: https://Stadt-Geschichte-Basel.github.io/sgb-minimal-html
+    about: Please see the documentation for sgb-minimal-html on its GitHub Pages page.
+  - name: Do you want to discuss sgb-minimal-html with the community?
+    url: https://github.com/Stadt-Geschichte-Basel/sgb-minimal-html/discussions
+    about: Please see the discussions page for sgb-minimal-html.
+blank_issues_enabled: true

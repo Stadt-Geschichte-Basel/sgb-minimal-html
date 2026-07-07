@@ -1,0 +1,86 @@
+---
+title: 'SGB Minimal HTML'
+subtitle: 'Minimal text-only HTML editions of the Stadt.Geschichte.Basel chapters'
+---
+
+## Overview
+
+**sgb-minimal-html** converts the chapter PDFs of the nine-volume book series [Stadt.Geschichte.Basel](https://www.stadtgeschichtebasel.ch/) (Christoph Merian Verlag) into minimal, text-only HTML editions — no images, no styling, just semantically structured text with linked endnotes — and publishes them as HTML publication formats on the Open Monograph Press instance [emono.unibas.ch](https://emono.unibas.ch/stadtgeschichtebasel/).
+
+::: {.callout-note icon="false"}
+## Key Features
+
+- 📖 **79 chapter editions** across all nine volumes, one self-contained HTML file per chapter
+- 🔤 **Typography-driven extraction** — every PDF line is classified by the series' font system
+- 🔗 **Linked endnotes** with back-references
+- 📑 **Appendix mode** for bibliographies, image credits, registers, and author notes
+- 🧹 **Clean text** — de-hyphenation and paragraphs that flow across page breaks
+- 🏷️ **Rich metadata** from the OMP API (`citation_*` meta tags, DOI, pages, authors, license)
+- ✅ **Quality checks** per chapter and 🚀 **idempotent publishing** via the OMP REST API
+:::
+
+Each edition is a single HTML file without CSS or images, named by its DOI suffix, for example [`10.21255/sgb-01.01-439115`](https://doi.org/10.21255/sgb-01.01-439115) → `html/volume-01/sgb-01.01-439115.html`, readable directly in the [emono.unibas.ch catalog](https://emono.unibas.ch/stadtgeschichtebasel/catalog).
+
+## Quick Start
+
+Install dependencies with [uv](https://docs.astral.sh/uv/):
+
+```bash
+pip install uv
+uv sync
+```
+
+Configure your Open Monograph Press API token (OMP user profile → API Key):
+
+```bash
+cp example.env .env
+# then edit .env: APIKEY=YOUR_OMP_API_TOKEN
+```
+
+Place the chapter PDFs under `pdf/volume-0X/chapters/`, named by DOI suffix.
+
+## Usage
+
+### Convert
+
+```bash
+# All chapters
+uv run sgb-html convert
+
+# A single chapter by DOI
+uv run sgb-html convert --doi 10.21255/sgb-01.01-439115
+```
+
+Writes one HTML file per chapter to `html/volume-0X/` and logs per-chapter statistics (blocks, endnotes, warnings). Unknown typography is logged, never silently dropped.
+
+### Check
+
+```bash
+uv run sgb-html check
+```
+
+Reports, per chapter, the word-count ratio of extracted text against the raw PDF text layer and verifies that every footnote marker has a matching endnote. Exits non-zero if any chapter needs review.
+
+### Upload
+
+```bash
+uv run sgb-html upload --dry-run   # print planned API calls first
+uv run sgb-html upload             # idempotent; skips already attached files
+uv run sgb-html upload --replace   # delete and re-upload existing galleys
+```
+
+Attaches each chapter's HTML file to the corresponding volume's HTML publication format in OMP, linked to its chapter, viewable, and open access. See the [methodology page](methodology.qmd) for the API details.
+
+## Development
+
+```bash
+uv run pytest --cov --cov-fail-under=100   # tests, 100% coverage on core modules
+uv run ruff check . && uv run ruff format . # lint and format
+uv run ty check                             # type check
+quarto preview                              # this documentation site
+```
+
+## License
+
+- **Code**: [AGPL-3.0](LICENSE-AGPL.md)
+- **Content** (generated HTML editions): [CC BY-NC 4.0](LICENSE-CCBYNC.md), © Stadt.Geschichte.Basel / Christoph Merian Verlag

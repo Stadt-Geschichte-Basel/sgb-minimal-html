@@ -1,0 +1,69 @@
+project:
+  type: website
+  render:
+    - index.qmd
+    - methodology.qmd
+    - CHANGELOG.md
+    - CODE_OF_CONDUCT.md
+    - CONTRIBUTING.md
+    - LICENSE-CCBYNC.md
+    - LICENSE-AGPL.md
+    - SECURITY.md
+
+website:
+  title: sgb-minimal-html
+  favicon: _extensions/Stadt-Geschichte-Basel/sgb-theme/favicon.png
+  open-graph: true
+  twitter-card: true
+  site-url: https://dokumentation.stadtgeschichtebasel.ch/sgb-minimal-html/
+  repo-url: https://github.com/Stadt-Geschichte-Basel/sgb-minimal-html/
+  issue-url: https://github.com/Stadt-Geschichte-Basel/sgb-minimal-html/issues/new/choose
+  repo-actions: [edit, issue]
+  page-navigation: true
+  bread-crumbs: true
+  back-to-top-navigation: true
+  search:
+    show-item-context: true
+    type: overlay
+  navbar:
+    logo: _extensions/Stadt-Geschichte-Basel/sgb-theme/assets/img/logo.svg
+    logo-alt: 'Stadt.Geschichte.Basel Logo'
+    title: sgb-minimal-html
+    tools:
+      - icon: github
+        url: https://github.com/Stadt-Geschichte-Basel/sgb-minimal-html/
+    left:
+      - text: Readme
+        href: index.qmd
+      - text: Methodology
+        href: methodology.qmd
+
+  sidebar:
+    contents:
+      - section: sgb-minimal-html
+        href: index.qmd
+        contents:
+          - text: Methodology
+            href: methodology.qmd
+          - text: Changelog
+            href: CHANGELOG.md
+          - text: Code of Conduct
+            href: CODE_OF_CONDUCT.md
+          - text: Contributing
+            href: CONTRIBUTING.md
+          - text: License (Content)
+            href: LICENSE-CCBYNC.md
+          - text: License (Code)
+            href: LICENSE-AGPL.md
+          - text: Security
+            href: SECURITY.md
+
+format:
+  sgb-theme-html:
+    include-in-header:
+      text: |
+        <script defer data-domain="dokumentation.stadtgeschichtebasel.ch" src="https://plausible.io/js/script.outbound-links.js"></script>
+
+freeze: auto
+
+editor: visual

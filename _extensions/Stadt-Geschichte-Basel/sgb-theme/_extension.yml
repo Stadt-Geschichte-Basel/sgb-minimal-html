@@ -1,0 +1,42 @@
+title: sgb-theme
+author: Stadt.Geschichte.Basel
+version: 1.0.0
+quarto-required: '>=1.6.0'
+contributes:
+  # Default format configurations
+  formats:
+    html:
+      # Theme and appearance
+      theme:
+        - cosmo
+        - _theme.scss
+      css: styles.css
+      mainfont: Euclid Circular B
+      # Features
+      toc: true
+      link-external-icon: true
+      link-external-newwindow: true
+      code-copy: true
+      code-overflow: wrap
+      title-block-categories: false
+      canonical-url: true
+
+      # Analytics - To customize for your site:
+      # 1. Override this in your _quarto.yml by setting:
+      #    format:
+      #      sgb-theme-html:
+      #        include-in-header:
+      #          text: |
+      #            <script defer data-domain="your-domain.com" src="https://plausible.io/js/script.outbound-links.js"></script>
+      # 2. Or remove analytics by setting include-in-header: null
+      include-in-header:
+        text: |
+          <script defer data-domain="stadtgeschichtebasel.ch" src="https://plausible.io/js/script.outbound-links.js"></script>
+
+      # Resources
+      resources:
+        - assets/fonts/EuclidCircularB-Medium-WebS.woff2
+        - assets/fonts/EuclidCircularB-Regular-WebS.woff2
+        - assets/fonts/EuclidCircularB-Semibold-WebS.woff2
+        - assets/img/logo.svg
+        - favicon.png

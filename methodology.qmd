@@ -1,0 +1,60 @@
+---
+title: 'Extraction Methodology'
+subtitle: 'How chapter PDFs become minimal HTML'
+---
+
+## Typography as structure
+
+The Stadt.Geschichte.Basel series uses one consistent typographic system across all nine volumes. Because every kind of content is set in a distinct font and size, each line of the PDF text layer can be classified by the font and size of its dominant span — no machine learning, no heuristics on wording, just the design system itself:
+
+| Font and size                        | Meaning                                    | Treatment                 |
+| ------------------------------------ | ------------------------------------------ | ------------------------- |
+| EuclidCircularB-Semibold ≥ 18 pt     | chapter title                              | cross-check with OMP      |
+| EuclidCircularB-Semibold ~14 pt      | section headings                           | `<h2>`                    |
+| EuclidCircularB-Regular ~14 pt       | author line on the opener                  | dropped (metadata via API)|
+| EuclidCircularB-Regular ~12.5 pt     | lead (intro) paragraph                     | `<p class="lead">`        |
+| Practice ~10.4 pt                    | body text (Italic → `<em>`)                | `<p>`                     |
+| Practice-Extrabold ~11 pt            | pull quotes (duplicated design text)       | dropped                   |
+| EuclidCircularB-Semibold ~9.5 pt     | sidebar/inset headings                     | `<h3>` in `<aside>`       |
+| EuclidCircularB-Regular ~8.5 pt      | sidebar/inset prose                        | `<aside>`                 |
+| EuclidCircularB ~7–7.5 pt            | captions, running heads, page numbers      | dropped                   |
+| EuclidCircularB ~6.5 pt              | endnote text                               | `<section>` of `<ol>`     |
+| Practice-Bold < 6 pt, superscript    | footnote markers in running text           | `<sup><a href="#fn…">`    |
+
+Lines in fonts foreign to the series (e.g. Helvetica) are OCR layers inside reproduced historical images and are dropped with a warning. Unknown sizes of the series fonts fail open into the body text and are logged for review.
+
+## Text reconstruction
+
+- **De-hyphenation** — the PDFs mark hyphenation breaks with soft hyphens (U+00AD): a line ending in a soft hyphen joins the next line without a space; a hard hyphen at a line end is a broken compound (`rot-blaue`) and is kept; an en dash before a digit continues a number range (`S. 123–127`).
+- **Paragraphs across pages** — paragraphs are detected by first-line indents (~25–30 pt) and continue across page breaks and around floated boxes (larger x-shifts of ~60 pt are text flowing around pull quotes or images, not new paragraphs).
+- **Endnotes** — the `Anmerkungen` section is set in two or three columns; lines are re-ordered column by column, note starts are recognized by their bold number spans, and markers are matched to notes by number (sidebar notes continue the chapter numbering; duplicate numbers are disambiguated by occurrence order).
+- **Footnote markers vs. superscripts** — only *bold* superscript digits are markers; regular superscripts such as the isotope notation ¹⁴C stay plain text.
+- **Figure anchors** — inline references like `[7 | 8]` point to images that are not part of the edition and are removed together with the figures, captions, and pull quotes.
+
+## Appendix chapters
+
+Each volume's final chapter (*Anhang*) — bibliography, image credits, registers, author notes — uses a different typographic register set almost entirely in small EuclidCircularB. When a chapter contains no body text in the series' body font, the extractor switches to an appendix mode: ~9.5 pt Semibold section headings, ~9 pt intro prose (split on vertical gaps), and ~6.5 pt entries with hanging indents, read column by column.
+
+## Quality assurance
+
+`sgb-html check` computes, per chapter:
+
+- the **word-count ratio** of extracted text against the raw PDF text layer (typical values 0.72–0.97; the difference is dropped captions and design furniture), and
+- **marker/endnote consistency** — every footnote marker must have a matching endnote.
+
+The core modules (`extract.py`, `render.py`) are pure functions over span dictionaries and carry **100% test coverage**.
+
+## Publishing to Open Monograph Press
+
+Each chapter edition is attached to its volume's HTML publication format via the OMP 3.4 REST API (`fileStage=10`, `assocType=521`). Three undocumented quirks of the API matter:
+
+1. `POST /submissions/{id}/files` fails with HTTP 500 if a `name` form field is included — the display name must come from the multipart filename.
+2. The publication-format association (`assocType`/`assocId`/`genreId`) must be set **at upload time**; the edit endpoint rejects `assocType` changes.
+3. Every `PUT`/`DELETE` on a file needs `stageId=5` (production workflow stage) as a query parameter.
+
+The chapter link (`chapterId`), visibility, and open-access sales type are set in a second step. Uploads are idempotent: files already attached under the same name are skipped unless `--replace` is given, in which case the old galley is deleted first.
+
+## Provenance
+
+- Source: chapter PDFs of [Stadt.Geschichte.Basel](https://www.stadtgeschichtebasel.ch/), Christoph Merian Verlag, published open access on [emono.unibas.ch](https://emono.unibas.ch/stadtgeschichtebasel/) under [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/).
+- All chapter and volume DOIs are listed in [`pdf/dois.txt`](https://github.com/Stadt-Geschichte-Basel/sgb-minimal-html/blob/main/pdf/dois.txt).

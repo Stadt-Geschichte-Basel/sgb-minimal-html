@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+message: 'If you use this software, please cite it as below.'
+authors:
+  - family-names: 'Mähr'
+    given-names: 'Moritz'
+    orcid: 'https://orcid.org/0000-0002-1367-1618'
+    affiliation: 'University of Basel'
+    email: 'moritz.maehr@unibas.ch'
+title: 'sgb-minimal-html'
+version: 0.1.0
+date-released: 2026-07-07
+url: 'https://github.com/Stadt-Geschichte-Basel/sgb-minimal-html'

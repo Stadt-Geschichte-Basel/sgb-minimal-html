@@ -1,0 +1,59 @@
+// Color palette
+$purple: #3a1e3e;
+$yellow: #ffe880;
+$dark-gray: #181818;
+$white: #ffffff;
+$link-blue: #2761e3;
+
+// Bootstrap variable overrides
+$primary: $purple;
+$body-bg: $white;
+$body-color: $dark-gray;
+$link-color: $link-blue;
+$navbar-bg: $purple;
+$navbar-dark-color: $white;
+$navbar-dark-hover-color: $yellow;
+
+/*-- scss:rules --*/
+
+.navbar-title:hover {
+	color: $yellow;
+}
+
+.aa-SubmitIcon:hover {
+	fill: $yellow;
+}
+
+.navbar .quarto-navbar-tools .quarto-navigation-tool:hover {
+	color: $yellow;
+}
+
+.navbar li.nav-item a.nav-link:hover {
+	color: $yellow;
+}
+
+h1 {
+	text-decoration: underline;
+	text-decoration-color: $yellow;
+	text-decoration-thickness: 4px;
+}
+
+.callout-tip,
+.callout-note {
+	border: 1.5px solid rgba(255, 232, 128, 0.85) !important;
+	border-left-width: 5px !important;
+}
+
+.callout-header {
+	background-color: $yellow !important;
+}
+
+::selection {
+	color: $purple;
+	background-color: $yellow;
+}
+
+.card:hover {
+	background-color: $yellow;
+	border-color: $purple;
+}

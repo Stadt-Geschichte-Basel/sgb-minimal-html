@@ -1,0 +1,25 @@
+# Generated chapter editions and source PDFs (should not be modified)
+html/
+pdf/
+
+# Static files (should not be modified)
+CODE_OF_CONDUCT.md
+LICENSE-AGPL.md
+LICENSE-CCBYNC.md
+
+# Generated files
+_site/
+.quarto/
+.venv/
+__pycache__/
+*.pyc
+uv.lock
+
+# Package managers
+node_modules/
+pnpm-lock.yaml
+
+# Build outputs
+dist/
+build/
+*.egg-info/
