@@ -417,7 +417,7 @@ def _build_notes(lines: Sequence[RawLine]) -> tuple[list[Note], list[str]]:
 
 def _build_aside(lines: list[tuple[Kind, RawLine]]) -> Aside:
     """Assemble one page's sidebar lines into an aside block."""
-    lines.sort(key=lambda item: item[1].y0)
+    lines = _aside_reading_order(lines)
     aside_blocks: list[Paragraph | Heading] = []
     prose: list[RawLine] = []
     for kind, line in lines:
@@ -433,6 +433,21 @@ def _build_aside(lines: list[tuple[Kind, RawLine]]) -> Aside:
             prose.append(line)
     aside_blocks.extend(_build_paragraphs(prose))
     return Aside(aside_blocks)
+
+
+def _aside_reading_order(lines: Sequence[tuple[Kind, RawLine]]) -> list[tuple[Kind, RawLine]]:
+    """Read sidebar text column by column, not by row across columns."""
+    columns: list[list[tuple[Kind, RawLine]]] = []
+    for item in sorted(lines, key=lambda item: item[1].x0):
+        line = item[1]
+        if columns and line.x0 - columns[-1][0][1].x0 < _NOTE_COLUMN_GAP:
+            columns[-1].append(item)
+        else:
+            columns.append([item])
+    ordered: list[tuple[Kind, RawLine]] = []
+    for column in columns:
+        ordered.extend(sorted(column, key=lambda item: item[1].y0))
+    return ordered
 
 
 def _main_flow(classified: list[tuple[Kind, RawLine]]) -> list[Block]:

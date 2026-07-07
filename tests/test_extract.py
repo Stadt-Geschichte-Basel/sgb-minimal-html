@@ -329,6 +329,50 @@ class TestStructure:
         assert head == Heading("Warteck bleibt", level=3)
         assert paragraph_text(prose) == "Für viele Menschen war die Brauerei fest verbunden."
 
+    def test_aside_columns_read_before_next_column(self) -> None:
+        page = FakePage(
+            [
+                body("Haupttext.", y0=50),
+                line(
+                    span("Am Morgen des Jahres 1755 um", "EuclidCircularB-Regular", 8.5),
+                    x0=28.0,
+                    y0=100,
+                ),
+                line(
+                    span("sieben Uhr lag die Temperatur tief.", "EuclidCircularB-Regular", 8.5),
+                    x0=28.0,
+                    y0=112,
+                ),
+                line(
+                    span(
+                        f"Jakob d’Annone, der spätere Universi{SOFT_HYPHEN}",
+                        "EuclidCircularB-Regular",
+                        8.5,
+                    ),
+                    x0=230.0,
+                    y0=100,
+                ),
+                line(
+                    span(
+                        "tätsprofessor, hielt die Wetterdaten fest.",
+                        "EuclidCircularB-Regular",
+                        8.5,
+                    ),
+                    x0=230.0,
+                    y0=112,
+                ),
+            ]
+        )
+        chapter = extract_chapter([page])
+        _body_block, aside = chapter.blocks
+        assert isinstance(aside, Aside)
+        (prose,) = aside.blocks
+        assert (
+            paragraph_text(prose)
+            == "Am Morgen des Jahres 1755 um sieben Uhr lag die Temperatur tief. "
+            "Jakob d’Annone, der spätere Universitätsprofessor, hielt die Wetterdaten fest."
+        )
+
     def test_aside_prose_splits_paragraphs_on_indent(self) -> None:
         page = FakePage(
             [
