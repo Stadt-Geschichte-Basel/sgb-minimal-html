@@ -30,7 +30,7 @@ SOFT_HYPHEN = "­"
 
 _DOI_RE = re.compile(r"https?://doi\.org/")
 _NOTE_START_RE = re.compile(r"^\s*(\d+) ?\t\s*(.*)$")
-_NOTE_COLUMN_GAP = 50.0
+_COLUMN_GAP = 50.0
 _PARAGRAPH_INDENT = 4.0
 _MAX_PARAGRAPH_INDENT = 40.0
 
@@ -190,6 +190,18 @@ def classify(line: RawLine) -> Kind:
         return Kind.UNKNOWN
     if font.startswith("EuclidCircularB"):
         heavy = "Semibold" in font or "Bold" in font
+        aside_span = next(
+            (
+                span
+                for span in line.spans
+                if span.font.startswith("EuclidCircularB")
+                and 8.0 <= span.size < 8.8
+                and span.text.strip()
+            ),
+            None,
+        )
+        if aside_span is not None:
+            return Kind.ASIDE_BODY
         if size >= 18:
             return Kind.TITLE
         if 13 <= size < 16:
@@ -202,8 +214,6 @@ def classify(line: RawLine) -> Kind:
             # Semibold ~9.5 heads sidebars; Regular ~9.5 is the author line
             # on the chapter opener (metadata comes from the OMP API instead).
             return Kind.ASIDE_HEAD if heavy else Kind.DROP
-        if 8.0 <= size < 8.8:
-            return Kind.ASIDE_BODY
         if 6.9 <= size < 8.0:
             return Kind.DROP  # captions, running heads, page numbers
         if 6.2 <= size < 6.9:
@@ -367,7 +377,7 @@ def _note_columns(lines: Sequence[RawLine]) -> list[list[RawLine]]:
         page_lines = sorted((li for li in lines if li.page == page), key=lambda li: li.x0)
         page_columns: list[list[RawLine]] = []
         for line in page_lines:
-            if page_columns and line.x0 - page_columns[-1][0].x0 < _NOTE_COLUMN_GAP:
+            if page_columns and line.x0 - page_columns[-1][0].x0 < _COLUMN_GAP:
                 page_columns[-1].append(line)
             else:
                 page_columns.append([line])
@@ -436,11 +446,30 @@ def _build_aside(lines: list[tuple[Kind, RawLine]]) -> Aside:
 
 
 def _aside_reading_order(lines: Sequence[tuple[Kind, RawLine]]) -> list[tuple[Kind, RawLine]]:
-    """Read sidebar text column by column, not by row across columns."""
+    """Read sidebar text column by column within heading-delimited bands."""
+    headings = sorted(
+        (item for item in lines if item[0] is Kind.ASIDE_HEAD),
+        key=lambda item: item[1].y0,
+    )
+    prose = [item for item in lines if item[0] is not Kind.ASIDE_HEAD]
+    ordered: list[tuple[Kind, RawLine]] = []
+    lower_y = float("-inf")
+    for heading in headings:
+        heading_y = heading[1].y0
+        band = [item for item in prose if lower_y <= item[1].y0 < heading_y]
+        ordered.extend(_column_reading_order(band))
+        ordered.append(heading)
+        lower_y = heading_y
+    ordered.extend(_column_reading_order([item for item in prose if item[1].y0 >= lower_y]))
+    return ordered
+
+
+def _column_reading_order(lines: Sequence[tuple[Kind, RawLine]]) -> list[tuple[Kind, RawLine]]:
+    """Read positioned text lines column by column, left to right."""
     columns: list[list[tuple[Kind, RawLine]]] = []
     for item in sorted(lines, key=lambda item: item[1].x0):
         line = item[1]
-        if columns and line.x0 - columns[-1][0][1].x0 < _NOTE_COLUMN_GAP:
+        if columns and line.x0 - columns[-1][0][1].x0 < _COLUMN_GAP:
             columns[-1].append(item)
         else:
             columns.append([item])
@@ -448,6 +477,57 @@ def _aside_reading_order(lines: Sequence[tuple[Kind, RawLine]]) -> list[tuple[Ki
     for column in columns:
         ordered.extend(sorted(column, key=lambda item: item[1].y0))
     return ordered
+
+
+def _paragraph_text(paragraph: Paragraph) -> str:
+    return "".join(inline.text for inline in paragraph.inlines if isinstance(inline, TextRun))
+
+
+def _is_unfinished(paragraph: Paragraph) -> bool:
+    text = _paragraph_text(paragraph).rstrip()
+    return bool(text) and text[-1] not in ".!?;:»›)]}"
+
+
+def _append_inlines(target: list[Inline], source: list[Inline]) -> None:
+    """Append finished inline runs while preserving paragraph glue rules."""
+    if not source:
+        return
+    incoming = list(source)
+    previous = target[-1] if target else None
+    first = incoming[0]
+    if isinstance(previous, TextRun):
+        upcoming = first.text if isinstance(first, TextRun) else ""
+        glue = _glue(previous.text, upcoming)
+        if isinstance(first, TextRun) and previous.italic == first.italic:
+            target[-1] = TextRun(previous.text + glue + first.text, previous.italic)
+            incoming = incoming[1:]
+        elif glue:
+            target[-1] = TextRun(previous.text + glue, previous.italic)
+    elif isinstance(previous, Marker) and isinstance(first, TextRun):
+        incoming[0] = TextRun(" " + first.text, first.italic)
+    target.extend(incoming)
+
+
+def _merge_continuation_asides(blocks: list[Block]) -> list[Block]:
+    """Join adjacent page asides when prose continues across the page break."""
+    merged: list[Block] = []
+    for block in blocks:
+        if (
+            isinstance(block, Aside)
+            and merged
+            and isinstance(merged[-1], Aside)
+            and block.blocks
+            and isinstance(block.blocks[0], Paragraph)
+            and merged[-1].blocks
+            and isinstance(merged[-1].blocks[-1], Paragraph)
+            and _is_unfinished(merged[-1].blocks[-1])
+        ):
+            previous = merged[-1].blocks[-1]
+            _append_inlines(previous.inlines, block.blocks[0].inlines)
+            merged[-1].blocks.extend(block.blocks[1:])
+        else:
+            merged.append(block)
+    return merged
 
 
 def _main_flow(classified: list[tuple[Kind, RawLine]]) -> list[Block]:
@@ -507,7 +587,7 @@ def _main_flow(classified: list[tuple[Kind, RawLine]]) -> list[Block]:
             pending_asides.clear()
 
     close_paragraph()
-    return blocks
+    return _merge_continuation_asides(blocks)
 
 
 def classify_appendix(line: RawLine) -> Kind:
@@ -545,7 +625,7 @@ def _column_runs(lines: Sequence[RawLine]) -> Iterator[list[RawLine]]:
         page_lines = sorted((li for li in lines if li.page == page), key=lambda li: li.x0)
         columns: list[list[RawLine]] = []
         for line in page_lines:
-            if columns and line.x0 - columns[-1][0].x0 < _NOTE_COLUMN_GAP:
+            if columns and line.x0 - columns[-1][0].x0 < _COLUMN_GAP:
                 columns[-1].append(line)
             else:
                 columns.append([line])

@@ -70,6 +70,18 @@ class TestClassify:
         assert classify(raw("Anmerkungstext", euclid, 6.5)) is Kind.NOTE
         assert classify(raw("winzig", euclid, 3.8)) is Kind.DROP
 
+    def test_mixed_aside_body_and_small_credit_keeps_aside_text(self) -> None:
+        entry = RawLine(
+            1,
+            55.0,
+            100.0,
+            (
+                RawSpan("vergessen. ", "EuclidCircularB-Regular", 8.5),
+                RawSpan("Autorin", "EuclidCircularB-Semibold", 7.0),
+            ),
+        )
+        assert classify(entry) is Kind.ASIDE_BODY
+
     def test_unknown_font(self) -> None:
         assert classify(raw("Fremd", "Helvetica", 10.0)) is Kind.UNKNOWN
 
@@ -249,6 +261,21 @@ class TestParagraphs:
         _append_line(inlines, anchor_only)
         assert inlines == [TextRun("bestehender Text")]
 
+    def test_append_finished_inlines_edge_cases(self) -> None:
+        from sgb_html.extract import Inline, _append_inlines
+
+        unchanged: list[Inline] = [TextRun("Text")]
+        _append_inlines(unchanged, [])
+        assert unchanged == [TextRun("Text")]
+
+        style_change: list[Inline] = [TextRun("normal")]
+        _append_inlines(style_change, [TextRun("kursiv", italic=True)])
+        assert style_change == [TextRun("normal "), TextRun("kursiv", italic=True)]
+
+        after_marker: list[Inline] = [TextRun("Satz"), Marker(1)]
+        _append_inlines(after_marker, [TextRun("danach")])
+        assert after_marker == [TextRun("Satz"), Marker(1), TextRun(" danach")]
+
     def test_empty_span_is_ignored(self) -> None:
         page = FakePage(
             [
@@ -371,6 +398,62 @@ class TestStructure:
             paragraph_text(prose)
             == "Am Morgen des Jahres 1755 um sieben Uhr lag die Temperatur tief. "
             "Jakob d’Annone, der spätere Universitätsprofessor, hielt die Wetterdaten fest."
+        )
+
+    def test_aside_heading_waits_for_columns_above_it(self) -> None:
+        page = FakePage(
+            [
+                body("Haupttext.", y0=50),
+                line(
+                    span("Differenz von zwanzig", "EuclidCircularB-Regular", 8.5),
+                    x0=85.0,
+                    y0=100,
+                ),
+                line(
+                    span("Minuten. Danach weiter.", "EuclidCircularB-Regular", 8.5),
+                    x0=288.0,
+                    y0=100,
+                ),
+                line(span("Neue Box", "EuclidCircularB-Semibold", 9.5), x0=113.0, y0=140),
+            ]
+        )
+        chapter = extract_chapter([page])
+        _body_block, aside = chapter.blocks
+        assert isinstance(aside, Aside)
+        prose, heading = aside.blocks
+        assert paragraph_text(prose) == "Differenz von zwanzig Minuten. Danach weiter."
+        assert heading == Heading("Neue Box", level=3)
+
+    def test_adjacent_asides_merge_when_page_break_splits_sentence(self) -> None:
+        first = FakePage(
+            [
+                body("Haupttext.", y0=50),
+                line(
+                    span(
+                        "Arbeiten dieses geschäftigten und nützlichen",
+                        "EuclidCircularB-Regular",
+                        8.5,
+                    )
+                ),
+            ]
+        )
+        second = FakePage(
+            [
+                line(span("Thieres sehen.", "EuclidCircularB-Regular", 8.5)),
+                line(
+                    span("Stadt. ", "EuclidCircularB-Regular", 8.5),
+                    span("Autorin", "EuclidCircularB-Semibold", 7.0),
+                    y0=112,
+                ),
+            ]
+        )
+        chapter = extract_chapter([first, second])
+        _body_block, aside = chapter.blocks
+        assert isinstance(aside, Aside)
+        (prose,) = aside.blocks
+        assert (
+            paragraph_text(prose)
+            == "Arbeiten dieses geschäftigten und nützlichen Thieres sehen. Stadt."
         )
 
     def test_aside_prose_splits_paragraphs_on_indent(self) -> None:
