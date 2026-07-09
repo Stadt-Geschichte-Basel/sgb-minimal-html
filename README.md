@@ -77,6 +77,12 @@ uv run sgb-html check
 uv run sgb-html upload --dry-run   # print planned API calls first
 uv run sgb-html upload             # idempotent; skips already attached files
 uv run sgb-html upload --replace   # delete and re-upload existing galleys
+
+# Replace the PDF galleys with metadata-enhanced PDFs (from pdf_dir). Chapter
+# PDFs (volume-*/chapters/sgb-0X.0Y-*.pdf) replace their chapter galley;
+# full-volume PDFs (volume-*/sgb-0X-*.pdf) replace the monograph galley.
+uv run sgb-html upload-pdf --dry-run   # print planned delete/upload/attach calls
+uv run sgb-html upload-pdf --replace   # delete and re-upload the PDF galleys
 ```
 
 ## Development

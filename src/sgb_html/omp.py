@@ -93,12 +93,18 @@ class ApiPublication(BaseModel):
     fullTitle: dict[str, str] | str | None = None
     urlPublished: str = ""
     chapterLicenseUrl: str = ""
+    doiObject: ApiDoi | None = None
     chapters: list[ApiChapter] = []
     publicationFormats: list[ApiPublicationFormat] = []
 
     @property
     def volume_title(self) -> str:
         return _de(self.fullTitle)
+
+    @property
+    def doi(self) -> str:
+        """The volume-level (monograph) DOI, empty when unset."""
+        return self.doiObject.doi if self.doiObject else ""
 
     def format_named(self, name: str) -> ApiPublicationFormat | None:
         for fmt in self.publicationFormats:
@@ -145,14 +151,22 @@ class OmpClient:
         return ApiSubmission.model_validate(response.json())
 
     def upload_proof_file(
-        self, submission_id: int, path: Path, name: str, format_id: int, genre_id: int | None
+        self,
+        submission_id: int,
+        path: Path,
+        name: str,
+        format_id: int,
+        genre_id: int | None,
+        *,
+        content_type: str = "text/html",
     ) -> dict[str, Any]:
-        """Upload an HTML galley into the proof stage of a publication format.
+        """Upload a galley file into the proof stage of a publication format.
 
-        The association with the publication format must be set at upload
-        time; the edit endpoint rejects ``assocType`` changes. A ``name``
-        form field triggers a server error, so the display name comes from
-        the multipart file name.
+        Defaults to an HTML galley; pass ``content_type="application/pdf"`` to
+        upload a PDF galley. The association with the publication format must be
+        set at upload time; the edit endpoint rejects ``assocType`` changes. A
+        ``name`` form field triggers a server error, so the display name comes
+        from the multipart file name.
         """
         data = {
             "fileStage": str(FILE_STAGE_PROOF),
@@ -165,7 +179,7 @@ class OmpClient:
             response = self._client.post(
                 f"/submissions/{submission_id}/files",
                 data=data,
-                files={"file": (name, handle, "text/html")},
+                files={"file": (name, handle, content_type)},
             )
         response.raise_for_status()
         return response.json()
@@ -186,17 +200,25 @@ class OmpClient:
         response.raise_for_status()
         return response.json()
 
+    def publish_galley(
+        self, submission_id: int, file_id: int, chapter_id: int | None = None
+    ) -> dict[str, Any]:
+        """Make an uploaded galley file viewable and open access.
+
+        Pass ``chapter_id`` to link the file to a chapter (chapter galleys);
+        omit it for a volume-level monograph galley, which has no chapter.
+        """
+        fields: dict[str, Any] = {
+            "viewable": True,
+            "salesType": "openAccess",
+            "directSalesPrice": "0",
+        }
+        if chapter_id is not None:
+            fields["chapterId"] = chapter_id
+        return self.edit_file(submission_id, file_id, fields)
+
     def attach_to_chapter(
         self, submission_id: int, file_id: int, chapter_id: int
     ) -> dict[str, Any]:
         """Link an uploaded galley file to its chapter and make it viewable."""
-        return self.edit_file(
-            submission_id,
-            file_id,
-            {
-                "chapterId": chapter_id,
-                "viewable": True,
-                "salesType": "openAccess",
-                "directSalesPrice": "0",
-            },
-        )
+        return self.publish_galley(submission_id, file_id, chapter_id)

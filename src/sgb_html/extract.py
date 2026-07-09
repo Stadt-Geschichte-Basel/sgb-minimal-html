@@ -318,7 +318,7 @@ def _append_line(inlines: list[Inline], line: RawLine, *, drop_anchors: bool = T
         if isinstance(first, TextRun) and previous.italic == first.italic:
             inlines[-1] = TextRun(previous.text + glue + first.text, previous.italic)
             new_runs = new_runs[1:]
-        elif glue:
+        elif glue and isinstance(first, TextRun):
             inlines[-1] = TextRun(previous.text + glue, previous.italic)
     elif isinstance(previous, Marker) and isinstance(first, TextRun):
         new_runs[0] = TextRun(" " + first.text, first.italic)
@@ -501,7 +501,7 @@ def _append_inlines(target: list[Inline], source: list[Inline]) -> None:
         if isinstance(first, TextRun) and previous.italic == first.italic:
             target[-1] = TextRun(previous.text + glue + first.text, previous.italic)
             incoming = incoming[1:]
-        elif glue:
+        elif glue and isinstance(first, TextRun):
             target[-1] = TextRun(previous.text + glue, previous.italic)
     elif isinstance(previous, Marker) and isinstance(first, TextRun):
         incoming[0] = TextRun(" " + first.text, first.italic)

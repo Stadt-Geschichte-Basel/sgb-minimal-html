@@ -276,6 +276,11 @@ class TestParagraphs:
         _append_inlines(after_marker, [TextRun("danach")])
         assert after_marker == [TextRun("Satz"), Marker(1), TextRun(" danach")]
 
+        # A footnote marker attaches to the preceding word without a glue space.
+        before_marker: list[Inline] = [TextRun("Wort")]
+        _append_inlines(before_marker, [Marker(2), TextRun(" Rest")])
+        assert before_marker == [TextRun("Wort"), Marker(2), TextRun(" Rest")]
+
     def test_empty_span_is_ignored(self) -> None:
         page = FakePage(
             [
