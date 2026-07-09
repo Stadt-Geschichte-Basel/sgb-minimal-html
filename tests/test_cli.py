@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 from sgb_html.cli import _pdf_jobs, _replace_pdf_galley, _volume_pdfs
-from sgb_html.omp import ApiSubmission
+from sgb_html.omp import ApiSubmission, OmpClient
+from sgb_html.settings import Settings
 
 SUBMISSION: dict[str, Any] = {
     "id": 85,
@@ -107,18 +108,18 @@ def test_volume_pdfs_ignores_chapter_pdfs(tmp_path: Path) -> None:
 
 
 def test_pdf_jobs_matches_chapters_and_volumes(tmp_path: Path) -> None:
-    settings = SimpleNamespace(pdf_dir=_make_pdfs(tmp_path))
-    jobs = _pdf_jobs(settings, FakeClient(_submission()), None)
+    settings = cast(Settings, SimpleNamespace(pdf_dir=_make_pdfs(tmp_path)))
+    jobs = _pdf_jobs(settings, cast(OmpClient, FakeClient(_submission())), None)
     by_suffix = {job.doi_suffix: job for job in jobs}
     assert by_suffix["sgb-09.00-167141"].chapter_id == 356
     assert by_suffix["sgb-09-486500"].chapter_id is None
 
 
 def test_replace_chapter_galley(tmp_path: Path) -> None:
-    settings = SimpleNamespace(pdf_dir=_make_pdfs(tmp_path))
+    settings = cast(Settings, SimpleNamespace(pdf_dir=_make_pdfs(tmp_path)))
     client = FakeClient(_submission())
-    job = next(j for j in _pdf_jobs(settings, client, None) if j.chapter_id == 356)
-    _replace_pdf_galley(client, job, dry_run=False, replace=True)
+    job = next(j for j in _pdf_jobs(settings, cast(OmpClient, client), None) if j.chapter_id == 356)
+    _replace_pdf_galley(cast(OmpClient, client), job, dry_run=False, replace=True)
     assert client.deleted == [(85, 978)]  # old chapter galley removed
     assert client.uploaded[0]["content_type"] == "application/pdf"
     assert client.uploaded[0]["genre_id"] == 58  # inherited from the old file
@@ -126,28 +127,30 @@ def test_replace_chapter_galley(tmp_path: Path) -> None:
 
 
 def test_replace_volume_monograph_galley(tmp_path: Path) -> None:
-    settings = SimpleNamespace(pdf_dir=_make_pdfs(tmp_path))
+    settings = cast(Settings, SimpleNamespace(pdf_dir=_make_pdfs(tmp_path)))
     client = FakeClient(_submission())
-    job = next(j for j in _pdf_jobs(settings, client, None) if j.chapter_id is None)
-    _replace_pdf_galley(client, job, dry_run=False, replace=True)
+    job = next(
+        j for j in _pdf_jobs(settings, cast(OmpClient, client), None) if j.chapter_id is None
+    )
+    _replace_pdf_galley(cast(OmpClient, client), job, dry_run=False, replace=True)
     assert client.deleted == [(85, 900)]  # old monograph galley removed
     assert client.published[0][2] is None  # no chapter for a volume galley
 
 
 def test_replace_skips_without_replace_flag(tmp_path: Path) -> None:
-    settings = SimpleNamespace(pdf_dir=_make_pdfs(tmp_path))
+    settings = cast(Settings, SimpleNamespace(pdf_dir=_make_pdfs(tmp_path)))
     client = FakeClient(_submission())
-    job = next(j for j in _pdf_jobs(settings, client, None) if j.chapter_id == 356)
-    _replace_pdf_galley(client, job, dry_run=False, replace=False)
+    job = next(j for j in _pdf_jobs(settings, cast(OmpClient, client), None) if j.chapter_id == 356)
+    _replace_pdf_galley(cast(OmpClient, client), job, dry_run=False, replace=False)
     assert client.deleted == []
     assert client.uploaded == []
 
 
 def test_dry_run_makes_no_calls(tmp_path: Path) -> None:
-    settings = SimpleNamespace(pdf_dir=_make_pdfs(tmp_path))
+    settings = cast(Settings, SimpleNamespace(pdf_dir=_make_pdfs(tmp_path)))
     client = FakeClient(_submission())
-    job = next(j for j in _pdf_jobs(settings, client, None) if j.chapter_id == 356)
-    _replace_pdf_galley(client, job, dry_run=True, replace=True)
+    job = next(j for j in _pdf_jobs(settings, cast(OmpClient, client), None) if j.chapter_id == 356)
+    _replace_pdf_galley(cast(OmpClient, client), job, dry_run=True, replace=True)
     assert client.deleted == []
     assert client.uploaded == []
     assert client.published == []
