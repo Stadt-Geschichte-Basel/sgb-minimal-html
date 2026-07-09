@@ -19,7 +19,14 @@ from sgb_html.extract import (
     TextRun,
     extract_chapter,
 )
-from sgb_html.omp import ApiChapter, ApiPublication, ApiSubmission, OmpClient, _de
+from sgb_html.omp import (
+    ApiChapter,
+    ApiPublication,
+    ApiPublicationFormat,
+    ApiSubmission,
+    OmpClient,
+    _de,
+)
 from sgb_html.render import ChapterMeta, render_chapter
 from sgb_html.settings import Settings
 
@@ -27,6 +34,7 @@ app = typer.Typer(add_completion=False, help=__doc__)
 log = structlog.get_logger()
 
 _PDF_NAME_RE = re.compile(r"^(sgb-\d{2}\.\d{2}-\d+)\.pdf$")
+_VOLUME_PDF_NAME_RE = re.compile(r"^(sgb-\d{2}-\d+)\.pdf$")
 
 
 @dataclass(frozen=True)
@@ -52,6 +60,20 @@ def _chapter_pdfs(pdf_dir: Path) -> dict[str, tuple[Path, str]]:
         match = _PDF_NAME_RE.match(path.name)
         if match:
             mapping[match.group(1)] = (path, path.parent.parent.name)
+    return mapping
+
+
+def _volume_pdfs(pdf_dir: Path) -> dict[str, Path]:
+    """Map volume DOI suffix (``sgb-09-486500``) to its full-volume PDF path.
+
+    Volume PDFs live at the volume-directory root (``volume-*/sgb-0X-*.pdf``),
+    alongside the ``chapters/`` subdirectory that holds the chapter PDFs.
+    """
+    mapping: dict[str, Path] = {}
+    for path in sorted(pdf_dir.glob("volume-*/*.pdf")):
+        match = _VOLUME_PDF_NAME_RE.match(path.name)
+        if match:
+            mapping[match.group(1)] = path
     return mapping
 
 
@@ -244,6 +266,119 @@ def upload(
             format_id=html_format.id,
             chapter_id=job.chapter.id,
         )
+
+
+@dataclass(frozen=True)
+class PdfGalleyJob:
+    """One PDF galley to replace: a local enhanced PDF plus its OMP target.
+
+    ``chapter_id`` is the chapter to attach to, or ``None`` for a volume-level
+    monograph galley (which has no chapter).
+    """
+
+    doi_suffix: str
+    pdf_path: Path
+    submission_id: int
+    pdf_format: ApiPublicationFormat
+    chapter_id: int | None
+
+
+def _pdf_jobs(settings: Settings, client: OmpClient, doi: str | None) -> list[PdfGalleyJob]:
+    """Match enhanced PDFs in ``pdf_dir`` to their OMP PDF galley targets."""
+    chapter_pdfs = _chapter_pdfs(settings.pdf_dir)
+    volume_pdfs = _volume_pdfs(settings.pdf_dir)
+    jobs: list[PdfGalleyJob] = []
+    for submission in client.submissions():
+        publication = submission.current_publication
+        pdf_format = publication.format_named("PDF")
+        if pdf_format is None:
+            log.warning("no_pdf_format", submission=submission.id)
+            continue
+        for chapter in publication.chapters:
+            suffix = chapter.doi.removeprefix("10.21255/")
+            if suffix and suffix in chapter_pdfs:
+                path, _ = chapter_pdfs[suffix]
+                jobs.append(PdfGalleyJob(suffix, path, submission.id, pdf_format, chapter.id))
+        volume_suffix = publication.doi.removeprefix("10.21255/")
+        if volume_suffix and volume_suffix in volume_pdfs:
+            jobs.append(
+                PdfGalleyJob(
+                    volume_suffix, volume_pdfs[volume_suffix], submission.id, pdf_format, None
+                )
+            )
+    if doi:
+        wanted = doi.removeprefix("10.21255/")
+        jobs = [job for job in jobs if job.doi_suffix == wanted]
+        if not jobs:
+            raise typer.BadParameter(f"no PDF galley found for DOI {doi}")
+    return jobs
+
+
+def _replace_pdf_galley(
+    client: OmpClient, job: PdfGalleyJob, *, dry_run: bool, replace: bool
+) -> None:
+    """Replace the existing PDF galley file(s) for one job with the enhanced PDF."""
+    existing = [f for f in job.pdf_format.submissionFiles if f.chapterId == job.chapter_id]
+    genre_id = existing[0].genreId if existing else None
+    if existing and not replace:
+        log.info("skip_existing", doi=job.doi_suffix, files=[f.id for f in existing])
+        return
+    if dry_run:
+        log.info(
+            "dry_run",
+            doi=job.doi_suffix,
+            submission=job.submission_id,
+            format_id=job.pdf_format.id,
+            chapter_id=job.chapter_id,
+            delete=[f.id for f in existing],
+            file=job.pdf_path.name,
+        )
+        return
+    for old in existing:
+        client.delete_file(job.submission_id, old.id)
+        log.info("deleted_old", doi=job.doi_suffix, file_id=old.id)
+    uploaded = client.upload_proof_file(
+        job.submission_id,
+        job.pdf_path,
+        job.pdf_path.name,
+        job.pdf_format.id,
+        genre_id,
+        content_type="application/pdf",
+    )
+    file_id = uploaded["id"]
+    client.publish_galley(job.submission_id, file_id, job.chapter_id)
+    log.info(
+        "uploaded",
+        doi=job.doi_suffix,
+        file_id=file_id,
+        format_id=job.pdf_format.id,
+        chapter_id=job.chapter_id,
+    )
+
+
+@app.command(name="upload-pdf")
+def upload_pdf(
+    doi: str | None = typer.Option(None, help="Upload a single PDF galley by DOI."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Only print planned API calls."),
+    replace: bool = typer.Option(
+        False, "--replace", help="Replace the existing PDF galley (delete then re-upload)."
+    ),
+) -> None:
+    """Replace OMP PDF galleys with metadata-enhanced PDFs from ``pdf_dir``.
+
+    Chapter PDFs (``volume-*/chapters/sgb-0X.0Y-*.pdf``) replace their chapter
+    galley; full-volume PDFs (``volume-*/sgb-0X-*.pdf``) replace the volume's
+    monograph galley. Only replaces content-identical files: the enhanced PDFs
+    differ from the originals in embedded metadata only. Run with ``--dry-run``
+    first.
+    """
+    settings = Settings()  # ty: ignore[missing-argument]  # apikey comes from .env
+    client = OmpClient(settings.base_url, settings.apikey)
+    for job in _pdf_jobs(settings, client, doi):
+        if not job.pdf_path.exists():
+            log.error("missing_pdf", doi=job.doi_suffix, path=str(job.pdf_path))
+            raise typer.Exit(1)
+        _replace_pdf_galley(client, job, dry_run=dry_run, replace=replace)
 
 
 if __name__ == "__main__":

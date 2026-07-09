@@ -158,3 +158,39 @@ def test_upload_without_genre_omits_field(tmp_path: Path) -> None:
     client = make_client(handler)
     uploaded = client.upload_proof_file(85, html_file, html_file.name, 96, None)
     assert uploaded["id"] == 4711
+
+
+def test_upload_pdf_content_type(tmp_path: Path) -> None:
+    pdf_file = tmp_path / "sgb-09.00-167141.pdf"
+    pdf_file.write_bytes(b"%PDF-1.7 enhanced")
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        content = request.read()
+        assert b"application/pdf" in content
+        assert b"text/html" not in content
+        return httpx2.Response(200, json={"id": 4712})
+
+    client = make_client(handler)
+    uploaded = client.upload_proof_file(
+        85, pdf_file, pdf_file.name, 86, 58, content_type="application/pdf"
+    )
+    assert uploaded["id"] == 4712
+
+
+def test_publish_galley_with_and_without_chapter() -> None:
+    seen: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        assert request.method == "PUT"
+        assert request.url.params["stageId"] == "5"
+        seen.append(json.loads(request.read()))
+        return httpx2.Response(200, json={"id": 4711})
+
+    client = make_client(handler)
+    client.publish_galley(85, 4711, 356)  # chapter galley
+    client.publish_galley(85, 4712)  # volume monograph galley
+    assert seen[0]["chapterId"] == 356
+    assert seen[0]["viewable"] is True
+    assert seen[0]["salesType"] == "openAccess"
+    assert "chapterId" not in seen[1]
+    assert seen[1]["viewable"] is True
