@@ -374,11 +374,21 @@ def upload_pdf(
     """
     settings = Settings()  # ty: ignore[missing-argument]  # apikey comes from .env
     client = OmpClient(settings.base_url, settings.apikey)
-    for job in _pdf_jobs(settings, client, doi):
+    jobs = _pdf_jobs(settings, client, doi)
+    for job in jobs:
         if not job.pdf_path.exists():
             log.error("missing_pdf", doi=job.doi_suffix, path=str(job.pdf_path))
             raise typer.Exit(1)
-        _replace_pdf_galley(client, job, dry_run=dry_run, replace=replace)
+    failures: list[str] = []
+    for job in jobs:
+        try:
+            _replace_pdf_galley(client, job, dry_run=dry_run, replace=replace)
+        except Exception as exc:  # keep going so one bad upload can't abort the batch
+            failures.append(job.doi_suffix)
+            log.error("upload_pdf_failed", doi=job.doi_suffix, error=str(exc))
+    if failures:
+        log.error("upload_pdf_incomplete", failed=failures)
+        raise typer.Exit(1)
 
 
 if __name__ == "__main__":

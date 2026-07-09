@@ -132,8 +132,12 @@ class OmpClient:
     """Minimal OMP REST client authenticated via ``apiToken``."""
 
     def __init__(self, base_url: str, api_token: str, client: httpx2.Client | None = None) -> None:
+        # Generous read/write timeouts: PDF galleys run to ~120 MB and easily
+        # exceed a 60 s write timeout on the upload.
         self._client = client or httpx2.Client(
-            base_url=base_url, params={"apiToken": api_token}, timeout=60.0
+            base_url=base_url,
+            params={"apiToken": api_token},
+            timeout=httpx2.Timeout(60.0, read=300.0, write=600.0),
         )
 
     def submissions(self) -> list[ApiSubmission]:
