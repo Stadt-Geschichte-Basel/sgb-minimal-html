@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,18 @@ LOCALE = "de"
 FILE_STAGE_PROOF = 10
 ASSOC_TYPE_REPRESENTATION = 521
 WORKFLOW_STAGE_PRODUCTION = 5
+
+_TOKEN_RE = re.compile(r"(apiToken=)[^&\s]+")
+
+
+def redact_token(text: str) -> str:
+    """Mask the ``apiToken`` query param so the secret never reaches logs.
+
+    httpx renders request URLs (including the auth query param) into its
+    exception strings, so raw ``str(exc)`` values must be scrubbed before
+    logging.
+    """
+    return _TOKEN_RE.sub(r"\1[REDACTED]", text)
 
 
 def _de(value: dict[str, str] | str | None) -> str:
@@ -132,8 +145,12 @@ class OmpClient:
     """Minimal OMP REST client authenticated via ``apiToken``."""
 
     def __init__(self, base_url: str, api_token: str, client: httpx2.Client | None = None) -> None:
+        # Generous read/write timeouts: PDF galleys run to ~120 MB and easily
+        # exceed a 60 s write timeout on the upload.
         self._client = client or httpx2.Client(
-            base_url=base_url, params={"apiToken": api_token}, timeout=60.0
+            base_url=base_url,
+            params={"apiToken": api_token},
+            timeout=httpx2.Timeout(60.0, read=300.0, write=600.0),
         )
 
     def submissions(self) -> list[ApiSubmission]:
