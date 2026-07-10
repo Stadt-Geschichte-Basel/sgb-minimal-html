@@ -26,6 +26,7 @@ from sgb_html.omp import (
     ApiSubmission,
     OmpClient,
     _de,
+    redact_token,
 )
 from sgb_html.render import ChapterMeta, render_chapter
 from sgb_html.settings import Settings
@@ -385,7 +386,7 @@ def upload_pdf(
             _replace_pdf_galley(client, job, dry_run=dry_run, replace=replace)
         except Exception as exc:  # keep going so one bad upload can't abort the batch
             failures.append(job.doi_suffix)
-            log.error("upload_pdf_failed", doi=job.doi_suffix, error=str(exc))
+            log.error("upload_pdf_failed", doi=job.doi_suffix, error=redact_token(str(exc)))
     if failures:
         log.error("upload_pdf_incomplete", failed=failures)
         raise typer.Exit(1)

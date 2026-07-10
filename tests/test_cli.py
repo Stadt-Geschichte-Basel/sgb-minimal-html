@@ -6,8 +6,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
-from sgb_html.cli import _pdf_jobs, _replace_pdf_galley, _volume_pdfs
-from sgb_html.omp import ApiSubmission, OmpClient
+import pytest
+from typer.testing import CliRunner
+
+import sgb_html.cli as cli
+from sgb_html.cli import _pdf_jobs, _replace_pdf_galley, _volume_pdfs, app
+from sgb_html.omp import ApiSubmission, OmpClient, redact_token
 from sgb_html.settings import Settings
 
 SUBMISSION: dict[str, Any] = {
@@ -154,3 +158,37 @@ def test_dry_run_makes_no_calls(tmp_path: Path) -> None:
     assert client.deleted == []
     assert client.uploaded == []
     assert client.published == []
+
+
+def test_upload_pdf_continues_after_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One failing galley must not abort the batch; the command exits 1."""
+    pdf = tmp_path / "x.pdf"
+    pdf.write_bytes(b"%PDF")
+    jobs = [
+        SimpleNamespace(doi_suffix="sgb-09.00-167141", pdf_path=pdf),
+        SimpleNamespace(doi_suffix="sgb-09-486500", pdf_path=pdf),
+    ]
+    attempted: list[str] = []
+
+    def fake_replace(client: Any, job: Any, *, dry_run: bool, replace: bool) -> None:
+        attempted.append(job.doi_suffix)
+        if job.doi_suffix == "sgb-09.00-167141":
+            raise RuntimeError("boom apiToken=secret")
+
+    monkeypatch.setattr(cli, "Settings", lambda: SimpleNamespace(base_url="", apikey=""))
+    monkeypatch.setattr(cli, "OmpClient", lambda *a, **k: FakeClient(_submission()))
+    monkeypatch.setattr(cli, "_pdf_jobs", lambda *a, **k: jobs)
+    monkeypatch.setattr(cli, "_replace_pdf_galley", fake_replace)
+
+    result = CliRunner().invoke(app, ["upload-pdf", "--replace"])
+    assert result.exit_code == 1
+    assert attempted == ["sgb-09.00-167141", "sgb-09-486500"]  # second job still attempted
+
+
+def test_redact_token_masks_secret() -> None:
+    leaked = "Server error '500' for url 'https://emono.example/files?apiToken=s3cr3t'"
+    redacted = redact_token(leaked)
+    assert "s3cr3t" not in redacted
+    assert "apiToken=[REDACTED]" in redacted

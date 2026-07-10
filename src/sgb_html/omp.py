@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,18 @@ LOCALE = "de"
 FILE_STAGE_PROOF = 10
 ASSOC_TYPE_REPRESENTATION = 521
 WORKFLOW_STAGE_PRODUCTION = 5
+
+_TOKEN_RE = re.compile(r"(apiToken=)[^&\s]+")
+
+
+def redact_token(text: str) -> str:
+    """Mask the ``apiToken`` query param so the secret never reaches logs.
+
+    httpx renders request URLs (including the auth query param) into its
+    exception strings, so raw ``str(exc)`` values must be scrubbed before
+    logging.
+    """
+    return _TOKEN_RE.sub(r"\1[REDACTED]", text)
 
 
 def _de(value: dict[str, str] | str | None) -> str:
