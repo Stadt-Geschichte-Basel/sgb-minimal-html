@@ -167,6 +167,58 @@ class TestParagraphs:
         assert isinstance(block, Paragraph)
         assert block.inlines == [TextRun("Satzende."), Marker(3), TextRun(" Neuer Satz.")]
 
+    def test_suspended_hyphen_before_conjunction_keeps_space(self) -> None:
+        page = FakePage(
+            [
+                body("Es drohten Trocken-", y0=100),
+                body("oder Kälteperioden. Vgl. beispiel.ch/kinder-", y0=112),
+                body("und-jugend als Quelle.", y0=124),
+            ]
+        )
+        (block,) = extract_chapter([page]).blocks
+        # Upper-case or digit head + conjunction -> hyphen kept, space restored;
+        # all-lower-case head (URL slug) stays glued.
+        assert paragraph_text(block) == (
+            "Es drohten Trocken- oder Kälteperioden. Vgl. beispiel.ch/kinder-und-jugend als Quelle."
+        )
+
+    def test_suspended_hyphen_with_digit_head(self) -> None:
+        page = FakePage([body("Zwischen den 1950er-und 1960er-Jahren.", y0=100)])
+        (block,) = extract_chapter([page]).blocks
+        assert paragraph_text(block) == "Zwischen den 1950er- und 1960er-Jahren."
+
+    def test_numeric_url_segments_stay_glued(self) -> None:
+        page = FakePage(
+            [body("Quelle chronik/1876-bis-1988 und obdachlosigkeit-im-19-und-20.", y0=100)]
+        )
+        (block,) = extract_chapter([page]).blocks
+        # Pure-digit URL path segments must not gain a space after the hyphen.
+        assert paragraph_text(block) == (
+            "Quelle chronik/1876-bis-1988 und obdachlosigkeit-im-19-und-20."
+        )
+
+    def test_marker_hugs_word_and_spaces_following_word(self) -> None:
+        # Word carries span padding and an anchor/whitespace span sits before the
+        # marker; the marker must hug the word while the next word gains a space.
+        page = FakePage(
+            [
+                line(
+                    span("durch Familienherrschaft ", "Practice-Regular", 10.4),
+                    span("[28]", "EuclidCircularB-Semibold", 7.0),
+                    span(" ", "Practice-Bold", 5.2),
+                    span("19", "Practice-Bold", 5.2, superscript=True),
+                    span("und Klientelismus.", "Practice-Regular", 10.4),
+                )
+            ]
+        )
+        (block,) = extract_chapter([page]).blocks
+        assert isinstance(block, Paragraph)
+        assert block.inlines == [
+            TextRun("durch Familienherrschaft"),
+            Marker(19),
+            TextRun(" und Klientelismus."),
+        ]
+
     def test_italic_runs_are_separated(self) -> None:
         page = FakePage(
             [
