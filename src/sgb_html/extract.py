@@ -267,6 +267,9 @@ def _line_inlines(line: RawLine, *, drop_anchors: bool = True) -> list[Inline]:
             continue
         digits = text.strip()
         if span.superscript and span.size < 7 and "Bold" in span.font and digits.isdigit():
+            if inlines and isinstance(inlines[-1], TextRun):
+                # Footnote markers hug the preceding word; drop any span padding.
+                inlines[-1] = TextRun(inlines[-1].text.rstrip(), inlines[-1].italic)
             inlines.append(Marker(int(digits)))
             continue
         if (
@@ -281,6 +284,8 @@ def _line_inlines(line: RawLine, *, drop_anchors: bool = True) -> list[Inline]:
         if isinstance(previous, TextRun) and previous.italic == italic:
             inlines[-1] = TextRun(previous.text + text, italic)
         else:
+            if isinstance(previous, Marker) and text[:1].isalnum():
+                text = " " + text
             inlines.append(TextRun(text, italic))
     return _trim_line(inlines)
 
@@ -328,10 +333,28 @@ def _append_line(inlines: list[Inline], line: RawLine, *, drop_anchors: bool = T
 def _polish(text: str) -> str:
     """Final text cleanup: soft hyphens out, spacing before punctuation fixed.
 
+    A compound head whose hyphen is directly followed by a conjunction is a
+    German suspended (ellipsis) compound: the space after the hyphen is restored
+    ("Trocken-oder" -> "Trocken- oder", "In-und" -> "In- und", "1950er-und" ->
+    "1950er- und"). The head must carry an upper-case letter or be a decade such
+    as ``1950er``; this leaves all-lower-case URL slugs (``fakultaeten-und``) and
+    numeric URL path segments (``1876-bis-1988``, ``im-19-und-20``) glued.
+
     >>> _polish(f"exis{SOFT_HYPHEN}tierte  . Und")
     'existierte. Und'
+    >>> _polish("Trocken-oder Kälteperioden, In-und Ausland")
+    'Trocken- oder Kälteperioden, In- und Ausland'
+    >>> _polish("1950er-und 1960er-Jahren")
+    '1950er- und 1960er-Jahren'
+    >>> _polish("chronik/1876-bis-1988, obdachlosigkeit-im-19-und-20-jahrhundert")
+    'chronik/1876-bis-1988, obdachlosigkeit-im-19-und-20-jahrhundert'
     """
     text = text.replace(SOFT_HYPHEN, "")
+    text = re.sub(
+        r"(\b(?:[A-Za-zÄÖÜäöüß0-9]*[A-ZÄÖÜ][A-Za-zÄÖÜäöüß0-9]*|[0-9]+er)-)(und|oder|bis)\b",
+        r"\1 \2",
+        text,
+    )
     text = re.sub(r" {2,}", " ", text)
     return re.sub(r" ([.,;:])", r"\1", text)
 
