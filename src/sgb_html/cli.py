@@ -183,6 +183,86 @@ def check() -> None:
     log.info("check_passed")
 
 
+# The genre fingerprint every volume on emono follows: the full-volume PDF is the
+# "volume" genre, the last (appendix) chapter is its own genre, and every other
+# chapter galley is the ordinary chapter genre — in both the PDF and HTML formats.
+GENRE_VOLUME = 57
+GENRE_APPENDIX = 55
+GENRE_CHAPTER = 58
+
+
+def _appendix_chapter_id(publication: ApiPublication) -> int | None:
+    """The chapter treated as the appendix: the one with the highest DOI suffix.
+
+    Chapter DOIs are zero-padded (``sgb-03.00``…``sgb-03.10``), so the plain
+    ``max`` of their DOIs is the last chapter of the volume.
+    """
+    chapters = [ch for ch in publication.chapters if ch.doi]
+    if not chapters:
+        return None
+    return max(chapters, key=lambda ch: ch.doi).id
+
+
+def _expected_genre(chapter_id: int | None, appendix_chapter_id: int | None) -> int:
+    if chapter_id is None:
+        return GENRE_VOLUME
+    if chapter_id == appendix_chapter_id:
+        return GENRE_APPENDIX
+    return GENRE_CHAPTER
+
+
+def _genre_anomalies(publication: ApiPublication) -> list[dict[str, object]]:
+    """Galley files whose genre deviates from the expected fingerprint.
+
+    Checking each file against the expected genre for its chapter also catches a
+    null genre and a PDF/HTML mismatch, since both formats share one expectation.
+    """
+    appendix_id = _appendix_chapter_id(publication)
+    anomalies: list[dict[str, object]] = []
+    for fmt in publication.publicationFormats:
+        if fmt.format_name not in ("PDF", "HTML"):
+            continue
+        for file in fmt.submissionFiles:
+            expected = _expected_genre(file.chapterId, appendix_id)
+            if file.genreId != expected:
+                anomalies.append(
+                    {
+                        "format": fmt.format_name,
+                        "file_id": file.id,
+                        "chapter_id": file.chapterId,
+                        "genre_id": file.genreId,
+                        "expected_genre": expected,
+                    }
+                )
+    return anomalies
+
+
+@app.command(name="check-genres")
+def check_genres() -> None:
+    """Flag galley files whose genre deviates from the per-volume norm.
+
+    A file with a null or wrong genre is the kind of mis-assignment that makes the
+    OMP catalog page return HTTP 500. Exits non-zero if any volume deviates.
+    """
+    settings = Settings()  # ty: ignore[missing-argument]  # apikey comes from .env
+    client = OmpClient(settings.base_url, settings.apikey)
+    failures = 0
+    for submission in client.submissions():
+        publication = submission.current_publication
+        anomalies = _genre_anomalies(publication)
+        title = publication.volume_title[:40]
+        if not anomalies:
+            log.info("genre_ok", submission=submission.id, title=title)
+            continue
+        failures += len(anomalies)
+        for anomaly in anomalies:
+            log.error("genre_anomaly", submission=submission.id, title=title, **anomaly)
+    if failures:
+        log.error("check_genres_failed", anomalies=failures)
+        raise typer.Exit(1)
+    log.info("check_genres_passed")
+
+
 def _word_count(chapter: Chapter) -> int:
     def block_words(block: Paragraph | Heading | Aside) -> int:
         if isinstance(block, Heading):
@@ -244,6 +324,13 @@ def upload(
             for file in pdf_format.submissionFiles:
                 if file.chapterId == job.chapter.id:
                     genre_id = file.genreId
+        if genre_id is None:
+            # Refuse to upload a genre-less galley: OMP's catalog page can 500 on a
+            # file with no (or the wrong) genre, and a null genre here means the PDF
+            # sibling we inherit from is missing or itself mis-typed. Fix the source
+            # genre first rather than silently propagating the gap.
+            log.error("no_genre_for_chapter", doi=job.doi_suffix, chapter_id=job.chapter.id)
+            raise typer.Exit(1)
         if dry_run:
             log.info(
                 "dry_run",
@@ -324,6 +411,11 @@ def _replace_pdf_galley(
     if existing and not replace:
         log.info("skip_existing", doi=job.doi_suffix, files=[f.id for f in existing])
         return
+    if genre_id is None:
+        # No prior galley to inherit a genre from; refuse rather than upload a
+        # genre-less file (see the note in ``upload``).
+        log.error("no_genre_for_galley", doi=job.doi_suffix, chapter_id=job.chapter_id)
+        raise typer.Exit(1)
     if dry_run:
         log.info(
             "dry_run",
