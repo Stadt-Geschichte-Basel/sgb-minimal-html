@@ -7,11 +7,26 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
 import sgb_html.cli as cli
-from sgb_html.cli import _pdf_jobs, _replace_pdf_galley, _volume_pdfs, app
-from sgb_html.omp import ApiSubmission, OmpClient, redact_token
+from sgb_html.cli import (
+    ChapterJob,
+    PdfGalleyJob,
+    _genre_anomalies,
+    _pdf_jobs,
+    _replace_pdf_galley,
+    _volume_pdfs,
+    app,
+)
+from sgb_html.omp import (
+    ApiPublication,
+    ApiPublicationFormat,
+    ApiSubmission,
+    OmpClient,
+    redact_token,
+)
 from sgb_html.settings import Settings
 
 SUBMISSION: dict[str, Any] = {
@@ -185,6 +200,139 @@ def test_upload_pdf_continues_after_failure(
     result = CliRunner().invoke(app, ["upload-pdf", "--replace"])
     assert result.exit_code == 1
     assert attempted == ["sgb-09.00-167141", "sgb-09-486500"]  # second job still attempted
+
+
+def test_replace_refuses_galley_without_genre(tmp_path: Path) -> None:
+    """No prior galley to inherit a genre from must abort, not upload genre-less."""
+    pdf = tmp_path / "sgb-09.00-167141.pdf"
+    pdf.write_bytes(b"%PDF")
+    # PDF format whose only file belongs to a *different* chapter, so the job's
+    # chapter (356) has no genre to inherit.
+    fmt = ApiPublicationFormat.model_validate(
+        {
+            "id": 86,
+            "name": {"de": "PDF"},
+            "submissionFiles": [{"id": 1, "chapterId": 999, "genreId": 58}],
+        }
+    )
+    job = PdfGalleyJob("sgb-09.00-167141", pdf, 85, fmt, 356)
+    client = FakeClient(_submission())
+    with pytest.raises(typer.Exit):
+        _replace_pdf_galley(cast(OmpClient, client), job, dry_run=False, replace=True)
+    assert client.uploaded == []
+
+
+def _fingerprint_publication(appendix_genre: int) -> ApiPublication:
+    """A Band-3-shaped publication; ``appendix_genre`` for the last chapter (311)."""
+    return ApiPublication.model_validate(
+        {
+            "id": 79,
+            "fullTitle": {"de": "Stadt in Verhandlung"},
+            "chapters": [
+                {"id": 301, "doiObject": {"doi": "10.21255/sgb-03.00-910023"}},
+                {"id": 302, "doiObject": {"doi": "10.21255/sgb-03.01-669037"}},
+                {"id": 311, "doiObject": {"doi": "10.21255/sgb-03.10-414719"}},
+            ],
+            "publicationFormats": [
+                {
+                    "id": 81,
+                    "name": {"de": "PDF"},
+                    "submissionFiles": [
+                        {"id": 2019, "chapterId": 301, "genreId": 58},
+                        {"id": 2020, "chapterId": 302, "genreId": 58},
+                        {"id": 2029, "chapterId": 311, "genreId": appendix_genre},
+                        {"id": 2030, "chapterId": None, "genreId": 57},
+                    ],
+                },
+                {
+                    "id": 90,
+                    "name": {"de": "HTML"},
+                    "submissionFiles": [
+                        {"id": 2122, "chapterId": 301, "genreId": 58},
+                        {"id": 2123, "chapterId": 302, "genreId": 58},
+                        {"id": 2130, "chapterId": 311, "genreId": appendix_genre},
+                    ],
+                },
+            ],
+        }
+    )
+
+
+def _fingerprint_submission(appendix_genre: int) -> ApiSubmission:
+    pub = _fingerprint_publication(appendix_genre)
+    return ApiSubmission.model_validate(
+        {"id": 79, "currentPublicationId": pub.id, "publications": [pub.model_dump()]}
+    )
+
+
+def test_genre_fingerprint_ok() -> None:
+    assert _genre_anomalies(_fingerprint_publication(55)) == []
+
+
+def test_genre_fingerprint_flags_wrong_appendix_genre() -> None:
+    # Band 3's real defect: the appendix chapter is genre 58 instead of 55.
+    anomalies = _genre_anomalies(_fingerprint_publication(58))
+    assert {(a["format"], a["file_id"]) for a in anomalies} == {("PDF", 2029), ("HTML", 2130)}
+    assert all(a["expected_genre"] == 55 and a["genre_id"] == 58 for a in anomalies)
+
+
+def test_genre_fingerprint_flags_null_genre() -> None:
+    pub = _fingerprint_publication(55)
+    pub.publicationFormats[1].submissionFiles[0].genreId = None
+    assert any(a["genre_id"] is None for a in _genre_anomalies(pub))
+
+
+def test_check_genres_command_exits_on_anomaly(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = FakeClient(_fingerprint_submission(58))
+    monkeypatch.setattr(cli, "Settings", lambda: SimpleNamespace(base_url="", apikey=""))
+    monkeypatch.setattr(cli, "OmpClient", lambda *a, **k: client)
+    assert CliRunner().invoke(app, ["check-genres"]).exit_code == 1
+
+
+def test_check_genres_command_passes_when_clean(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = FakeClient(_fingerprint_submission(55))
+    monkeypatch.setattr(cli, "Settings", lambda: SimpleNamespace(base_url="", apikey=""))
+    monkeypatch.setattr(cli, "OmpClient", lambda *a, **k: client)
+    assert CliRunner().invoke(app, ["check-genres"]).exit_code == 0
+
+
+def test_upload_refuses_html_without_genre(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """HTML upload must abort when no PDF sibling supplies a genre to inherit."""
+    out = tmp_path / "sgb-03.10-414719.html"
+    out.write_text("<html></html>", encoding="utf-8")
+    publication = ApiPublication.model_validate(
+        {
+            "id": 79,
+            "chapters": [{"id": 311, "doiObject": {"doi": "10.21255/sgb-03.10-414719"}}],
+            "publicationFormats": [
+                {"id": 90, "name": {"de": "HTML"}, "submissionFiles": []},
+                # PDF sibling is for a *different* chapter, so genre stays None.
+                {
+                    "id": 81,
+                    "name": {"de": "PDF"},
+                    "submissionFiles": [{"id": 1, "chapterId": 999, "genreId": 58}],
+                },
+            ],
+        }
+    )
+    submission = ApiSubmission.model_validate(
+        {"id": 79, "currentPublicationId": 79, "publications": [publication.model_dump()]}
+    )
+    job = ChapterJob(
+        "sgb-03.10-414719",
+        tmp_path / "x.pdf",
+        "volume-03",
+        submission,
+        publication,
+        publication.chapters[0],
+    )
+    client = FakeClient(submission)
+    monkeypatch.setattr(cli, "Settings", lambda: SimpleNamespace(base_url="", apikey=""))
+    monkeypatch.setattr(cli, "OmpClient", lambda *a, **k: client)
+    monkeypatch.setattr(cli, "_jobs", lambda *a, **k: [job])
+    monkeypatch.setattr(cli, "_output_path", lambda settings, job: out)
+    assert CliRunner().invoke(app, ["upload"]).exit_code == 1
+    assert client.uploaded == []
 
 
 def test_redact_token_masks_secret() -> None:
