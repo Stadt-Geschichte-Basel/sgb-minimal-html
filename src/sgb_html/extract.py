@@ -727,6 +727,8 @@ def extract_chapter(pages: Iterable[SupportsTextDict]) -> Chapter:
         if kind is not Kind.DROP:
             classified.append((kind, line))
 
+    classified = _demote_late_leads(classified)
+
     title_lines = [line for kind, line in classified if kind is Kind.TITLE]
     title = ""
     for line in title_lines:
@@ -742,6 +744,7 @@ def extract_chapter(pages: Iterable[SupportsTextDict]) -> Chapter:
         note_lines = [line for kind, line in classified if kind is Kind.NOTE]
         notes, note_warnings = _build_notes(note_lines)
         warnings.extend(note_warnings)
+        notes = _prune_orphan_notes(notes, blocks, warnings)
     else:
         # No running text in the series body font: an appendix chapter.
         appendix: list[tuple[Kind, RawLine]] = []
@@ -760,6 +763,69 @@ def extract_chapter(pages: Iterable[SupportsTextDict]) -> Chapter:
     for block in blocks:
         _strip_heading_hyphens(block)
     return Chapter(title=title, blocks=blocks, notes=notes, warnings=warnings)
+
+
+def _demote_late_leads(
+    classified: list[tuple[Kind, RawLine]],
+) -> list[tuple[Kind, RawLine]]:
+    """Drop lead-styled lines that follow the first body line.
+
+    The lead sits between the title and the running text. Lead-sized lines
+    after body text that hold no letters are infographic labels (for example
+    years in a chart). Lead-sized prose after body text is a mid-chapter
+    intro; it keeps its place in the lead until it gets its own block.
+    """
+    seen_body = False
+    result: list[tuple[Kind, RawLine]] = []
+    for kind, line in classified:
+        if kind is Kind.BODY:
+            seen_body = True
+        if kind is Kind.LEAD and seen_body and not any(c.isalpha() for c in line.text):
+            continue
+        result.append((kind, line))
+    return result
+
+
+def _marker_counts(blocks: Sequence[Block]) -> dict[int, int]:
+    """Count the footnote markers per number, including markers inside asides."""
+    counts: dict[int, int] = {}
+    for block in blocks:
+        if isinstance(block, Paragraph):
+            for inline in block.inlines:
+                if isinstance(inline, Marker):
+                    counts[inline.number] = counts.get(inline.number, 0) + 1
+        elif isinstance(block, Aside):
+            for number, count in _marker_counts(block.blocks).items():
+                counts[number] = counts.get(number, 0) + count
+    return counts
+
+
+def _prune_orphan_notes(
+    notes: list[Note], blocks: Sequence[Block], warnings: list[str]
+) -> list[Note]:
+    """Remove endnotes that repeat another note and have no marker of their own.
+
+    The k-th note with number N needs a k-th marker with number N. A note
+    without one is an orphan. It is dropped only when its text repeats an
+    earlier kept note (a typesetting leftover in the PDF). Other orphans stay
+    in the output and raise a warning, so no real endnote disappears silently.
+    """
+    markers = _marker_counts(blocks)
+    seen: dict[int, int] = {}
+    kept: list[Note] = []
+    for note in notes:
+        occurrence = seen.get(note.number, 0) + 1
+        seen[note.number] = occurrence
+        if occurrence <= markers.get(note.number, 0):
+            kept.append(note)
+        elif any(note.text == earlier.text for earlier in kept):
+            warnings.append(
+                f"orphan endnote {note.number} dropped (duplicate text): {note.text[:60]!r}"
+            )
+        else:
+            warnings.append(f"endnote {note.number} has no marker: {note.text[:60]!r}")
+            kept.append(note)
+    return kept
 
 
 def _strip_heading_hyphens(block: Block) -> None:
