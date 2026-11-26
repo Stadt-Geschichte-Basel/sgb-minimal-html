@@ -420,7 +420,8 @@ def _ends_lead_paragraph(line: RawLine, widest: float) -> bool:
     >>> _ends_lead_paragraph(RawLine(1, 57.0, 0.0, (text,), x1=358.0), 382.0)
     False
     """
-    stripped = line.text.rstrip()
+    text = "".join(s.text for s in line.spans if not _is_marker_span(s))
+    stripped = text.rstrip()
     if not stripped or stripped[-1] not in ".!?»›":
         return False
     return widest - line.x1 > _LEAD_SHORT_LINE * dominant_span(line).size
