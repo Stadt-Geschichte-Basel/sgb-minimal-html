@@ -109,3 +109,14 @@ class TestRenderChapter:
         )
         assert "In: Band 2" in html
         assert "In: <a" not in html
+
+
+def test_note_without_marker_in_text_has_no_backlink() -> None:
+    chapter = Chapter(
+        title="T",
+        blocks=[Paragraph([TextRun("Text."), Marker(1)])],
+        notes=[Note(1, "Mit Marker."), Note(54, "Nur in Bildlegende.", linked=False)],
+    )
+    html = render_chapter(chapter, FULL_META)
+    assert '<li id="fn1" value="1">Mit Marker. <a href="#ref-fn1"' in html
+    assert '<li id="fn54" value="54">Nur in Bildlegende.</li>' in html

@@ -748,16 +748,131 @@ class TestLateLeadAndOrphanNotes:
         assert isinstance(lead, Paragraph) and lead.lead
         assert paragraph_text(lead) == "Der Lead-Text."
 
-    def test_lead_style_prose_after_body_is_kept(self) -> None:
+    def test_lead_style_prose_after_body_gets_its_own_block(self) -> None:
         opener = FakePage(
             [
                 line(span("Der Lead-Text.", "EuclidCircularB-Regular", 12.5), y0=120),
                 body("Der erste Satz.", y0=170),
             ]
         )
-        essay = FakePage([line(span("Einleitung eines Essays.", "EuclidCircularB-Regular", 12.5))])
+        essay = FakePage(
+            [
+                line(span("Einleitung eines Essays", "EuclidCircularB-Regular", 12.5), y0=108),
+                line(span("über die Stadt und", "EuclidCircularB-Regular", 12.5), y0=127),
+                line(span("ihre Bilder.", "EuclidCircularB-Regular", 12.5), y0=147),
+                body("Danach der Fliesstext.", y0=200),
+            ]
+        )
         chapter = extract_chapter([opener, essay])
-        assert paragraph_text(chapter.blocks[0]) == "Der Lead-Text. Einleitung eines Essays."
+        lead, first, mid_lead, after = chapter.blocks
+        assert isinstance(lead, Paragraph) and lead.lead
+        assert paragraph_text(lead) == "Der Lead-Text."
+        assert not (isinstance(first, Paragraph) and first.lead)
+        assert isinstance(mid_lead, Paragraph) and mid_lead.lead
+        assert paragraph_text(mid_lead) == "Einleitung eines Essays über die Stadt und ihre Bilder."
+        assert isinstance(after, Paragraph) and not after.lead
+        assert paragraph_text(after) == "Danach der Fliesstext."
+
+    def test_late_lead_on_last_page_closes_open_body_paragraph(self) -> None:
+        opener = FakePage([body("Offener Satz", y0=100)])
+        essay = FakePage(
+            [
+                line(span("Eins zwei", "EuclidCircularB-Regular", 12.5), y0=108),
+                line(span("drei vier", "EuclidCircularB-Regular", 12.5), y0=127),
+                line(span("fünf sechs.", "EuclidCircularB-Regular", 12.5), y0=147),
+            ]
+        )
+        chapter = extract_chapter([opener, essay])
+        body_block, mid_lead = chapter.blocks
+        assert paragraph_text(body_block) == "Offener Satz"
+        assert isinstance(mid_lead, Paragraph) and mid_lead.lead
+        assert paragraph_text(mid_lead) == "Eins zwei drei vier fünf sechs."
+
+    def test_lead_style_map_labels_after_body_are_dropped(self) -> None:
+        opener = FakePage(
+            [
+                line(span("Der Lead-Text.", "EuclidCircularB-Regular", 12.5), y0=120),
+                body("Der erste Satz.", y0=170),
+            ]
+        )
+        map_page = FakePage(
+            [
+                line(span("Königreich Frankreich", "EuclidCircularB-Regular", 12.5), y0=108),
+                line(span("Schweiz", "EuclidCircularB-Regular", 12.5), y0=116),
+                line(span("Grossherzogthum Baden", "EuclidCircularB-Regular", 12.5), y0=271),
+                body("Weiter im Text.", y0=300),
+            ]
+        )
+        chapter = extract_chapter([opener, map_page])
+        assert [paragraph_text(block) for block in chapter.blocks] == [
+            "Der Lead-Text.",
+            "Der erste Satz. Weiter im Text.",
+        ]
+
+    def test_marker_in_late_lead_is_kept(self) -> None:
+        essay = FakePage(
+            [
+                body("Anfang.", y0=50),
+                line(span("Erster Teil", "EuclidCircularB-Regular", 12.5), y0=108),
+                line(
+                    span("fest.", "EuclidCircularB-Regular", 12.5),
+                    span("24", "Practice-Bold", 7.3, superscript=True),
+                    span(" Weiter", "EuclidCircularB-Regular", 12.5),
+                    y0=127,
+                ),
+                line(span("und Schluss.", "EuclidCircularB-Regular", 12.5), y0=147),
+                note_start(24, "Huber 2014, S. 404.", y0=300),
+            ]
+        )
+        chapter = extract_chapter([essay])
+        mid_lead = chapter.blocks[1]
+        assert paragraph_text(mid_lead) == "Erster Teil fest.[24] Weiter und Schluss."
+        assert chapter.warnings == []
+
+    def test_body_line_dominated_by_figure_anchor_is_kept(self) -> None:
+        page = FakePage(
+            [
+                body("Davor.", y0=50),
+                line(
+                    span("den ", "Practice-Regular", 10.4),
+                    span("[46 | 47]", "EuclidCircularB-Semibold", 7.0),
+                    span(".", "Practice-Regular", 10.4),
+                    span("177", "Practice-Bold", 5.2, superscript=True),
+                    y0=62,
+                ),
+                note_start(177, "Stopp 2011.", y0=300),
+            ]
+        )
+        chapter = extract_chapter([page])
+        assert paragraph_text(chapter.blocks[0]) == "Davor. den.[177]"
+        assert chapter.warnings == []
+
+    def test_anchor_only_line_stays_dropped(self) -> None:
+        page = FakePage(
+            [
+                body("Satz.", y0=50),
+                line(span("[7 | 8]", "EuclidCircularB-Semibold", 7.0), y0=62),
+            ]
+        )
+        chapter = extract_chapter([page])
+        assert [paragraph_text(block) for block in chapter.blocks] == ["Satz."]
+
+    def test_note_marked_only_in_dropped_caption_is_kept_unlinked(self) -> None:
+        page = FakePage(
+            [
+                body("Lauftext.", y0=50),
+                line(
+                    span("werte als der Durchschnitt.", "EuclidCircularB-Regular", 7.5),
+                    span("54", "Practice-Bold", 5.2, superscript=True),
+                    y0=80,
+                ),
+                note_start(54, "StABS, PA 66 1.", y0=300),
+            ]
+        )
+        chapter = extract_chapter([page])
+        (note,) = chapter.notes
+        assert (note.number, note.text, note.linked) == (54, "StABS, PA 66 1.", False)
+        assert chapter.warnings == []
 
     def test_duplicate_note_without_marker_is_dropped(self) -> None:
         page = FakePage(
