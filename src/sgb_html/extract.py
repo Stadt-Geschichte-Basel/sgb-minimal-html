@@ -69,6 +69,7 @@ class RawLine:
     x0: float
     y0: float
     spans: tuple[RawSpan, ...]
+    x1: float = 0.0
 
     @property
     def text(self) -> str:
@@ -160,8 +161,8 @@ def iter_raw_lines(pages: Iterable[SupportsTextDict]) -> Iterator[RawLine]:
                 )
                 if not "".join(s.text for s in spans).strip():
                     continue
-                x0, y0 = line["bbox"][0], line["bbox"][1]
-                yield RawLine(page=page_number, x0=x0, y0=y0, spans=spans)
+                x0, y0, x1 = line["bbox"][0], line["bbox"][1], line["bbox"][2]
+                yield RawLine(page=page_number, x0=x0, y0=y0, spans=spans, x1=x1)
 
 
 def dominant_span(line: RawLine) -> RawSpan:
@@ -403,6 +404,28 @@ def _finish(inlines: list[Inline]) -> list[Inline]:
     return [TextRun(_polish(i.text), i.italic) if isinstance(i, TextRun) else i for i in inlines]
 
 
+_LEAD_SHORT_LINE = 5.0  # font sizes; a lead line this short before a break ends a paragraph
+
+
+def _ends_lead_paragraph(line: RawLine, widest: float) -> bool:
+    """True when a lead line ends a sentence and stops far short of the right edge.
+
+    Lead paragraphs have no first-line indent and no extra spacing. A short last
+    line is the only cue. Lines that stop less than five font sizes short stay
+    joined, because the ragged right edge varies by about that much.
+
+    >>> text = RawSpan("Ende.", "EuclidCircularB-Regular", 12.5)
+    >>> _ends_lead_paragraph(RawLine(1, 57.0, 0.0, (text,), x1=239.0), 416.0)
+    True
+    >>> _ends_lead_paragraph(RawLine(1, 57.0, 0.0, (text,), x1=358.0), 382.0)
+    False
+    """
+    stripped = line.text.rstrip()
+    if not stripped or stripped[-1] not in ".!?»›":
+        return False
+    return widest - line.x1 > _LEAD_SHORT_LINE * dominant_span(line).size
+
+
 def _starts_paragraph(line: RawLine, base: float, previous: RawLine | None) -> bool:
     """First-line indents (~25-30 pt) start paragraphs; larger x-shifts are
     text flowing around images or margin boxes and continue the paragraph."""
@@ -416,12 +439,21 @@ def _build_paragraphs(lines: Sequence[RawLine], *, lead: bool = False) -> list[P
     """Group consecutive lines into paragraphs using first-line indents."""
     paragraphs: list[Paragraph] = []
     base_x: dict[int, float] = {}
+    widest: dict[int, float] = {}
     for line in lines:
         base_x[line.page] = min(base_x.get(line.page, line.x0), line.x0)
+        widest[line.page] = max(widest.get(line.page, line.x1), line.x1)
     current: list[Inline] = []
     previous: RawLine | None = None
     for line in lines:
-        if current and _starts_paragraph(line, base_x[line.page], previous):
+        if current and (
+            _starts_paragraph(line, base_x[line.page], previous)
+            or (
+                lead
+                and previous is not None
+                and _ends_lead_paragraph(previous, widest[previous.page])
+            )
+        ):
             paragraphs.append(_paragraph(current, lead=lead))
             current = []
         _append_line(current, line)
@@ -612,6 +644,11 @@ def _main_flow(classified: list[tuple[Kind, RawLine]]) -> list[Block]:
     current_is_lead = False
     pending_asides: list[Block] = []
     previous: RawLine | None = None
+    previous_lead: RawLine | None = None
+    lead_widest: dict[int, float] = {}
+    for _kind, line in classified:
+        if _kind is Kind.LEAD:
+            lead_widest[line.page] = max(lead_widest.get(line.page, line.x1), line.x1)
 
     def close_paragraph() -> None:
         nonlocal current
@@ -632,10 +669,14 @@ def _main_flow(classified: list[tuple[Kind, RawLine]]) -> list[Block]:
             if kind is Kind.LEAD:
                 # A mid-chapter intro (lead-style text after the first body
                 # line) is a lead paragraph of its own, at its own position.
-                if not current_is_lead:
+                if not current_is_lead or (
+                    previous_lead is not None
+                    and _ends_lead_paragraph(previous_lead, lead_widest[previous_lead.page])
+                ):
                     close_paragraph()
                 current_is_lead = True
                 _append_line(current, line)
+                previous_lead = line
                 continue
             if current_is_lead:
                 close_paragraph()

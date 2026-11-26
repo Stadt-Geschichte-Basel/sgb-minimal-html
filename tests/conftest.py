@@ -9,8 +9,8 @@ def span(text: str, font: str, size: float, *, superscript: bool = False) -> dic
     return {"text": text, "font": font, "size": size, "flags": 1 if superscript else 0}
 
 
-def line(*spans: dict, x0: float = 55.0, y0: float = 100.0) -> dict:
-    return {"bbox": (x0, y0, x0 + 300.0, y0 + 12.0), "spans": list(spans)}
+def line(*spans: dict, x0: float = 55.0, y0: float = 100.0, width: float = 300.0) -> dict:
+    return {"bbox": (x0, y0, x0 + width, y0 + 12.0), "spans": list(spans)}
 
 
 @dataclass
