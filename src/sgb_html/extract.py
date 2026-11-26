@@ -21,7 +21,7 @@ so the logic can be tested with plain dictionaries.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Collection, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from itertools import pairwise
@@ -121,6 +121,8 @@ Block = Paragraph | Heading | Aside
 class Note:
     number: int
     text: str
+    linked: bool = True
+    """False when the marker sits in text the extractor drops (a figure or table caption)."""
 
 
 @dataclass
@@ -173,7 +175,33 @@ def dominant_span(line: RawLine) -> RawSpan:
     candidates = [s for s in line.spans if not s.superscript and s.text.strip()]
     if not candidates:
         candidates = list(line.spans)
-    return max(candidates, key=lambda s: len(s.text.strip()))
+    text_spans = [s for s in candidates if not _is_figure_anchor(s)]
+    return max(text_spans or candidates, key=lambda s: len(s.text.strip()))
+
+
+def _is_figure_anchor(span: RawSpan) -> bool:
+    """A small figure reference such as ``[7 | 8]`` inside running text.
+
+    >>> _is_figure_anchor(RawSpan("[7 | 8]", "EuclidCircularB-Semibold", 7.0))
+    True
+    >>> _is_figure_anchor(RawSpan("[7] Kasten", "EuclidCircularB-Regular", 7.0))
+    False
+    """
+    text = span.text.strip()
+    return (
+        span.font.startswith("EuclidCircularB")
+        and span.size < 8
+        and text.startswith("[")
+        and text.endswith("]")
+        and "|" in text
+    )
+
+
+def _is_marker_span(span: RawSpan) -> bool:
+    """A bold superscript number: an endnote marker (7.3 pt in a lead, 5.2 pt in body)."""
+    return (
+        span.superscript and span.size < 8 and "Bold" in span.font and span.text.strip().isdigit()
+    )
 
 
 def classify(line: RawLine) -> Kind:
@@ -270,7 +298,7 @@ def _line_inlines(line: RawLine, *, drop_anchors: bool = True) -> list[Inline]:
         if not text.strip():
             continue
         digits = text.strip()
-        if span.superscript and span.size < 7 and "Bold" in span.font and digits.isdigit():
+        if _is_marker_span(span):
             if inlines and isinstance(inlines[-1], TextRun):
                 # Footnote markers hug the preceding word; drop any span padding.
                 inlines[-1] = TextRun(inlines[-1].text.rstrip(), inlines[-1].italic)
@@ -581,13 +609,14 @@ def _main_flow(classified: list[tuple[Kind, RawLine]]) -> list[Block]:
 
     blocks: list[Block] = []
     current: list[Inline] = []
+    current_is_lead = False
     pending_asides: list[Block] = []
     previous: RawLine | None = None
 
     def close_paragraph() -> None:
         nonlocal current
         if current:
-            blocks.append(Paragraph(_finish(current)))
+            blocks.append(Paragraph(_finish(current), lead=current_is_lead))
             current = []
         blocks.extend(pending_asides)
         pending_asides.clear()
@@ -596,10 +625,21 @@ def _main_flow(classified: list[tuple[Kind, RawLine]]) -> list[Block]:
         main = [
             (kind, line)
             for kind, line in classified
-            if line.page == page and kind in (Kind.HEADING, Kind.BODY)
+            if line.page == page and kind in (Kind.HEADING, Kind.BODY, Kind.LEAD)
         ]
         main.sort(key=lambda item: item[1].y0)
         for kind, line in main:
+            if kind is Kind.LEAD:
+                # A mid-chapter intro (lead-style text after the first body
+                # line) is a lead paragraph of its own, at its own position.
+                if not current_is_lead:
+                    close_paragraph()
+                current_is_lead = True
+                _append_line(current, line)
+                continue
+            if current_is_lead:
+                close_paragraph()
+                current_is_lead = False
             if kind is Kind.HEADING:
                 close_paragraph()
                 heading_text = _plain_text(line)
@@ -727,6 +767,7 @@ def extract_chapter(pages: Iterable[SupportsTextDict]) -> Chapter:
     """Turn a chapter PDF into structured, text-only content."""
     classified: list[tuple[Kind, RawLine]] = []
     warnings: list[str] = []
+    dropped_markers: set[int] = set()
     raw_lines = list(iter_raw_lines(pages))
     for line in raw_lines:
         kind = classify(line)
@@ -739,7 +780,9 @@ def extract_chapter(pages: Iterable[SupportsTextDict]) -> Chapter:
             # Odd sizes of the series fonts are still book text; foreign
             # fonts are OCR layers inside reproduced images and are dropped.
             kind = Kind.BODY if series_font and span.size >= 8 else Kind.DROP
-        if kind is not Kind.DROP:
+        if kind is Kind.DROP:
+            dropped_markers.update(int(s.text) for s in line.spans if _is_marker_span(s))
+        else:
             classified.append((kind, line))
 
     classified = _demote_late_leads(classified)
@@ -753,13 +796,18 @@ def extract_chapter(pages: Iterable[SupportsTextDict]) -> Chapter:
 
     notes: list[Note] = []
     if any(kind in (Kind.BODY, Kind.LEAD) for kind, _ in classified):
-        lead_lines = [line for kind, line in classified if kind is Kind.LEAD]
+        first_body = next(
+            (index for index, (kind, _) in enumerate(classified) if kind is Kind.BODY),
+            len(classified),
+        )
+        lead_lines = [line for kind, line in classified[:first_body] if kind is Kind.LEAD]
         blocks: list[Block] = list(_build_paragraphs(lead_lines, lead=True))
-        blocks.extend(_main_flow(classified))
+        opener = {id(line) for line in lead_lines}
+        blocks.extend(_main_flow([item for item in classified if id(item[1]) not in opener]))
         note_lines = [line for kind, line in classified if kind is Kind.NOTE]
         notes, note_warnings = _build_notes(note_lines)
         warnings.extend(note_warnings)
-        notes = _prune_orphan_notes(notes, blocks, warnings)
+        notes = _prune_orphan_notes(notes, blocks, warnings, dropped_markers)
     else:
         # No running text in the series body font: an appendix chapter.
         appendix: list[tuple[Kind, RawLine]] = []
@@ -860,24 +908,58 @@ def order_authors(names: Sequence[str], *sources: str) -> tuple[str, ...]:
     return tuple(sorted(names, key=lambda name: (name.split()[-1].casefold(), name)))
 
 
+_LATE_LEAD_MIN_LINES = 3
+_LATE_LEAD_MAX_GAP = 1.8  # in font sizes; lead leading is about 1.55
+
+
 def _demote_late_leads(
     classified: list[tuple[Kind, RawLine]],
 ) -> list[tuple[Kind, RawLine]]:
-    """Drop lead-styled lines that follow the first body line.
+    """Drop lead-styled lines after the first body line that are not prose.
 
     The lead sits between the title and the running text. Lead-sized lines
     after body text that hold no letters are infographic labels (for example
-    years in a chart). Lead-sized prose after body text is a mid-chapter
-    intro; it keeps its place in the lead until it gets its own block.
+    years in a chart). Lead-sized lines that stand alone or in a pair (map
+    labels) are labels too. A run of at least three consecutive lines is a
+    mid-chapter intro; it stays in the stream as lead lines and
+    :func:`_main_flow` gives it its own block.
+
+    >>> def lead(text: str, y: float, page: int = 2) -> tuple[Kind, RawLine]:
+    ...     span = RawSpan(text, "EuclidCircularB-Regular", 12.5)
+    ...     return Kind.LEAD, RawLine(page, 57.0, y, (span,))
+    >>> body = (Kind.BODY, RawLine(1, 57.0, 10.0, (RawSpan("T", "Practice-Regular", 10.4),)))
+    >>> kept = _demote_late_leads([body, lead("A", 108), lead("B", 127), lead("C", 147)])
+    >>> [line.text for _, line in kept[1:]]
+    ['A', 'B', 'C']
+    >>> len(_demote_late_leads([body, lead("A", 108), lead("B", 300)]))
+    1
     """
     seen_body = False
     result: list[tuple[Kind, RawLine]] = []
+    group: list[tuple[Kind, RawLine]] = []
+
+    def flush() -> None:
+        if len(group) >= _LATE_LEAD_MIN_LINES:
+            result.extend(group)
+        group.clear()
+
     for kind, line in classified:
+        late_prose = kind is Kind.LEAD and seen_body and any(c.isalpha() for c in line.text)
         if kind is Kind.BODY:
             seen_body = True
-        if kind is Kind.LEAD and seen_body and not any(c.isalpha() for c in line.text):
+        if kind is Kind.LEAD and seen_body:
+            if not late_prose:
+                continue
+            if group:
+                last = group[-1][1]
+                size = dominant_span(last).size
+                if line.page != last.page or line.y0 - last.y0 > _LATE_LEAD_MAX_GAP * size:
+                    flush()
+            group.append((kind, line))
             continue
+        flush()
         result.append((kind, line))
+    flush()
     return result
 
 
@@ -896,7 +978,10 @@ def _marker_counts(blocks: Sequence[Block]) -> dict[int, int]:
 
 
 def _prune_orphan_notes(
-    notes: list[Note], blocks: Sequence[Block], warnings: list[str]
+    notes: list[Note],
+    blocks: Sequence[Block],
+    warnings: list[str],
+    dropped_markers: Collection[int] = (),
 ) -> list[Note]:
     """Remove endnotes that repeat another note and have no marker of their own.
 
@@ -904,6 +989,8 @@ def _prune_orphan_notes(
     without one is an orphan. It is dropped only when its text repeats an
     earlier kept note (a typesetting leftover in the PDF). Other orphans stay
     in the output and raise a warning, so no real endnote disappears silently.
+    A note whose marker the book prints in dropped text (a figure or table
+    caption) stays without a backlink and raises no warning.
     """
     markers = _marker_counts(blocks)
     seen: dict[int, int] = {}
@@ -917,6 +1004,8 @@ def _prune_orphan_notes(
             warnings.append(
                 f"orphan endnote {note.number} dropped (duplicate text): {note.text[:60]!r}"
             )
+        elif note.number in dropped_markers:
+            kept.append(Note(note.number, note.text, linked=False))
         else:
             warnings.append(f"endnote {note.number} has no marker: {note.text[:60]!r}")
             kept.append(note)

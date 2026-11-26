@@ -64,7 +64,7 @@ def _notes_html(notes: list[Note], ids: _NoteIds) -> str:
     items: list[str] = []
     for note in notes:
         note_id = ids.next_id(note.number)
-        backlink = f' <a href="#ref-{note_id}" role="doc-backlink">↑</a>'
+        backlink = f' <a href="#ref-{note_id}" role="doc-backlink">↑</a>' if note.linked else ""
         items.append(f'<li id="{note_id}" value="{note.number}">{escape(note.text)}{backlink}</li>')
     body = "\n".join(items)
     return f'<section role="doc-endnotes">\n<h2>Anmerkungen</h2>\n<ol>\n{body}\n</ol>\n</section>'
