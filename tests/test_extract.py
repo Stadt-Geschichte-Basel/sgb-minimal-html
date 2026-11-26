@@ -516,6 +516,51 @@ class TestStructure:
             == "Arbeiten dieses geschäftigten und nützlichen Thieres sehen. Stadt."
         )
 
+    def test_aside_word_hyphenated_at_page_break_is_rejoined(self) -> None:
+        first = FakePage(
+            [
+                body("Haupttext.", y0=50),
+                line(
+                    span(
+                        "Stadt aber noch an anderer Stelle als beson\u00ad",
+                        "EuclidCircularB-Regular",
+                        8.5,
+                    )
+                ),
+            ]
+        )
+        second = FakePage(
+            [
+                line(span("ders fruchtbar erweisen.", "EuclidCircularB-Regular", 8.5)),
+            ]
+        )
+        chapter = extract_chapter([first, second])
+        _body_block, aside = chapter.blocks
+        assert isinstance(aside, Aside)
+        (prose,) = aside.blocks
+        assert (
+            paragraph_text(prose)
+            == "Stadt aber noch an anderer Stelle als besonders fruchtbar erweisen."
+        )
+
+    def test_aside_chain_over_three_pages_keeps_space_after_plain_line_end(self) -> None:
+        soft = "\xad"
+        pages = [
+            FakePage(
+                [
+                    body("Haupttext.", y0=50),
+                    line(span(f"Alpha beta ein{soft}", "EuclidCircularB-Regular", 8.5)),
+                ]
+            ),
+            FakePage([line(span("zelne Fusion", "EuclidCircularB-Regular", 8.5))]),
+            FakePage([line(span("hervorgegangene Zeitung.", "EuclidCircularB-Regular", 8.5))]),
+        ]
+        chapter = extract_chapter(pages)
+        _body_block, aside = chapter.blocks
+        assert isinstance(aside, Aside)
+        (prose,) = aside.blocks
+        assert paragraph_text(prose) == "Alpha beta einzelne Fusion hervorgegangene Zeitung."
+
     def test_aside_prose_splits_paragraphs_on_indent(self) -> None:
         page = FakePage(
             [

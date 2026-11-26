@@ -97,6 +97,8 @@ Inline = TextRun | Marker
 class Paragraph:
     inlines: list[Inline]
     lead: bool = False
+    hyphenated: bool = False
+    """True when the last PDF line ended on a soft hyphen (word split across a break)."""
 
 
 @dataclass
@@ -361,6 +363,13 @@ def _polish(text: str) -> str:
     return re.sub(r" ([.,;:])", r"\1", text)
 
 
+def _paragraph(inlines: list[Inline], *, lead: bool) -> Paragraph:
+    """Build a finished paragraph; remember a soft hyphen at its very end."""
+    last = inlines[-1] if inlines else None
+    hyphenated = isinstance(last, TextRun) and last.text.endswith(SOFT_HYPHEN)
+    return Paragraph(_finish(inlines), lead=lead, hyphenated=hyphenated)
+
+
 def _finish(inlines: list[Inline]) -> list[Inline]:
     """Apply the final text cleanup to every run of a paragraph."""
     return [TextRun(_polish(i.text), i.italic) if isinstance(i, TextRun) else i for i in inlines]
@@ -385,12 +394,12 @@ def _build_paragraphs(lines: Sequence[RawLine], *, lead: bool = False) -> list[P
     previous: RawLine | None = None
     for line in lines:
         if current and _starts_paragraph(line, base_x[line.page], previous):
-            paragraphs.append(Paragraph(_finish(current), lead=lead))
+            paragraphs.append(_paragraph(current, lead=lead))
             current = []
         _append_line(current, line)
         previous = line
     if current:
-        paragraphs.append(Paragraph(_finish(current), lead=lead))
+        paragraphs.append(_paragraph(current, lead=lead))
     return paragraphs
 
 
@@ -548,7 +557,11 @@ def _merge_continuation_asides(blocks: list[Block]) -> list[Block]:
             and _is_unfinished(merged[-1].blocks[-1])
         ):
             previous = merged[-1].blocks[-1]
+            if previous.hyphenated:
+                previous.inlines.append(TextRun(SOFT_HYPHEN, False))
             _append_inlines(previous.inlines, block.blocks[0].inlines)
+            previous.inlines[:] = _finish(previous.inlines)
+            previous.hyphenated = block.blocks[0].hyphenated
             merged[-1].blocks.extend(block.blocks[1:])
         else:
             merged.append(block)
