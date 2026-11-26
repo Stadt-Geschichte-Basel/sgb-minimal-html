@@ -73,6 +73,9 @@ uv run sgb-html convert --doi 10.21255/sgb-01.01-439115
 # QA report: extraction coverage and footnote consistency per chapter
 uv run sgb-html check
 
+# Build a review pack (ledger, lint, page images) in .review/ for one chapter
+uv run sgb-html review-pack --doi sgb-08.05-264155
+
 # Attach the HTML files to each volume's HTML publication format in OMP
 uv run sgb-html upload --dry-run   # print planned API calls first
 uv run sgb-html upload             # idempotent; skips already attached files

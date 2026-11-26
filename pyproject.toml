@@ -48,6 +48,6 @@ addopts = "--doctest-modules"
 source = ["sgb_html"]
 
 [tool.coverage.report]
-include = ["*/sgb_html/extract.py", "*/sgb_html/render.py"]
+include = ["*/sgb_html/extract.py", "*/sgb_html/render.py", "*/sgb_html/review.py"]
 fail_under = 100
 show_missing = true

@@ -805,12 +805,30 @@ def _appendix_flow(classified: list[tuple[Kind, RawLine]]) -> list[Block]:
     return blocks
 
 
-def extract_chapter(pages: Iterable[SupportsTextDict]) -> Chapter:
-    """Turn a chapter PDF into structured, text-only content."""
+@dataclass
+class LinePlan:
+    """The extractor's final decision for every PDF line of a chapter."""
+
+    classified: list[tuple[Kind, RawLine]]
+    """The kept lines with their body-chapter role (the appendix title comes from here)."""
+    decisions: list[tuple[RawLine, Kind]]
+    """Every raw line with its final role; ``Kind.DROP`` marks a dropped line."""
+    appendix: bool
+    """True for an appendix chapter, which has its own line roles."""
+    warnings: list[str]
+    dropped_markers: set[int]
+    """Endnote numbers printed in dropped lines (figure and table captions)."""
+
+
+def plan_lines(raw_lines: Sequence[RawLine]) -> LinePlan:
+    """Decide the role of every line: classify, apply fallbacks, drop late labels.
+
+    ``extract_chapter`` and the review ledger both call this, so they cannot
+    disagree about what the extractor kept.
+    """
     classified: list[tuple[Kind, RawLine]] = []
     warnings: list[str] = []
     dropped_markers: set[int] = set()
-    raw_lines = list(iter_raw_lines(pages))
     for line in raw_lines:
         kind = classify(line)
         if kind is Kind.UNKNOWN:
@@ -828,6 +846,31 @@ def extract_chapter(pages: Iterable[SupportsTextDict]) -> Chapter:
             classified.append((kind, line))
 
     classified = _demote_late_leads(classified)
+    if any(kind in (Kind.BODY, Kind.LEAD) for kind, _ in classified):
+        kept = {id(line): kind for kind, line in classified}
+        decisions = [(line, kept.get(id(line), Kind.DROP)) for line in raw_lines]
+        return LinePlan(classified, decisions, False, warnings, dropped_markers)
+    # No running text in the series body font: an appendix chapter.
+    decisions = []
+    for line in raw_lines:
+        kind = classify_appendix(line)
+        if kind is Kind.UNKNOWN:
+            span = dominant_span(line)
+            warnings.append(
+                f"page {line.page}: unknown appendix style {span.font} "
+                f"{span.size:.1f}: {line.text[:60]!r}"
+            )
+            kind = Kind.DROP
+        decisions.append((line, kind))
+    return LinePlan(classified, decisions, True, warnings, dropped_markers)
+
+
+def extract_chapter(pages: Iterable[SupportsTextDict]) -> Chapter:
+    """Turn a chapter PDF into structured, text-only content."""
+    raw_lines = list(iter_raw_lines(pages))
+    plan = plan_lines(raw_lines)
+    warnings = plan.warnings
+    classified = plan.classified
 
     title_lines = [line for kind, line in classified if kind is Kind.TITLE]
     title = ""
@@ -837,7 +880,7 @@ def extract_chapter(pages: Iterable[SupportsTextDict]) -> Chapter:
     title = _polish(title)
 
     notes: list[Note] = []
-    if any(kind in (Kind.BODY, Kind.LEAD) for kind, _ in classified):
+    if not plan.appendix:
         first_body = next(
             (index for index, (kind, _) in enumerate(classified) if kind is Kind.BODY),
             len(classified),
@@ -849,21 +892,9 @@ def extract_chapter(pages: Iterable[SupportsTextDict]) -> Chapter:
         note_lines = [line for kind, line in classified if kind is Kind.NOTE]
         notes, note_warnings = _build_notes(note_lines)
         warnings.extend(note_warnings)
-        notes = _prune_orphan_notes(notes, blocks, warnings, dropped_markers)
+        notes = _prune_orphan_notes(notes, blocks, warnings, plan.dropped_markers)
     else:
-        # No running text in the series body font: an appendix chapter.
-        appendix: list[tuple[Kind, RawLine]] = []
-        for line in raw_lines:
-            kind = classify_appendix(line)
-            if kind is Kind.UNKNOWN:
-                span = dominant_span(line)
-                warnings.append(
-                    f"page {line.page}: unknown appendix style {span.font} "
-                    f"{span.size:.1f}: {line.text[:60]!r}"
-                )
-                kind = Kind.DROP
-            appendix.append((kind, line))
-        blocks = _appendix_flow(appendix)
+        blocks = _appendix_flow([(kind, line) for line, kind in plan.decisions])
 
     for block in blocks:
         _strip_heading_hyphens(block)
