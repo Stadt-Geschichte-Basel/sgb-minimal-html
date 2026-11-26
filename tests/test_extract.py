@@ -874,6 +874,78 @@ class TestLateLeadAndOrphanNotes:
         assert (note.number, note.text, note.linked) == (54, "StABS, PA 66 1.", False)
         assert chapter.warnings == []
 
+    def test_opener_lead_splits_after_short_sentence_end_line(self) -> None:
+        page = FakePage(
+            [
+                line(span("Erster Absatz mit Text", "EuclidCircularB-Regular", 12.5), y0=100),
+                line(span("und Ende.", "EuclidCircularB-Regular", 12.5), y0=119, width=100),
+                line(span("Zweiter Absatz beginnt.", "EuclidCircularB-Regular", 12.5), y0=138),
+                body("Der erste Satz.", y0=200),
+            ]
+        )
+        chapter = extract_chapter([page])
+        first, second, _body = chapter.blocks
+        assert paragraph_text(first) == "Erster Absatz mit Text und Ende."
+        assert paragraph_text(second) == "Zweiter Absatz beginnt."
+        assert isinstance(second, Paragraph) and second.lead
+
+    def test_late_lead_splits_after_short_sentence_end_line(self) -> None:
+        essay = FakePage(
+            [
+                body("Anfang.", y0=50),
+                line(span("Eins zwei drei", "EuclidCircularB-Regular", 12.5), y0=108),
+                line(span("vier fünf.", "EuclidCircularB-Regular", 12.5), y0=127, width=100),
+                line(span("Sechs sieben", "EuclidCircularB-Regular", 12.5), y0=147),
+                line(span("acht neun.", "EuclidCircularB-Regular", 12.5), y0=166, width=100),
+            ]
+        )
+        chapter = extract_chapter([essay])
+        assert [paragraph_text(block) for block in chapter.blocks] == [
+            "Anfang.",
+            "Eins zwei drei vier fünf.",
+            "Sechs sieben acht neun.",
+        ]
+
+    def test_lead_splits_after_sentence_end_followed_by_marker(self) -> None:
+        page = FakePage(
+            [
+                line(span("Erster Absatz mit Text", "EuclidCircularB-Regular", 12.5), y0=100),
+                line(
+                    span("und Ende.", "EuclidCircularB-Regular", 12.5),
+                    span("24", "Practice-Bold", 7.3, superscript=True),
+                    y0=119,
+                    width=100,
+                ),
+                line(span("Zweiter Absatz beginnt.", "EuclidCircularB-Regular", 12.5), y0=138),
+                body("Der erste Satz.", y0=200),
+            ]
+        )
+        chapter = extract_chapter([page])
+        first, second, _body = chapter.blocks
+        assert paragraph_text(first) == "Erster Absatz mit Text und Ende.[24]"
+        assert paragraph_text(second) == "Zweiter Absatz beginnt."
+
+    def test_lead_does_not_split_on_slightly_short_or_unfinished_lines(self) -> None:
+        page = FakePage(
+            [
+                line(
+                    span("Satz eins endet hier.", "EuclidCircularB-Regular", 12.5),
+                    y0=100,
+                    width=280,
+                ),
+                line(
+                    span("Satz zwei geht weiter", "EuclidCircularB-Regular", 12.5),
+                    y0=119,
+                    width=100,
+                ),
+                line(span("und endet.", "EuclidCircularB-Regular", 12.5), y0=138),
+                body("Der erste Satz.", y0=200),
+            ]
+        )
+        chapter = extract_chapter([page])
+        lead, _body = chapter.blocks
+        assert paragraph_text(lead) == "Satz eins endet hier. Satz zwei geht weiter und endet."
+
     def test_duplicate_note_without_marker_is_dropped(self) -> None:
         page = FakePage(
             [
