@@ -24,6 +24,7 @@ import re
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
+from itertools import pairwise
 from typing import Protocol
 
 SOFT_HYPHEN = "­"
@@ -128,6 +129,7 @@ class Chapter:
     blocks: list[Block] = field(default_factory=list)
     notes: list[Note] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    author_line: str = ""
 
 
 class SupportsTextDict(Protocol):
@@ -762,7 +764,87 @@ def extract_chapter(pages: Iterable[SupportsTextDict]) -> Chapter:
 
     for block in blocks:
         _strip_heading_hyphens(block)
-    return Chapter(title=title, blocks=blocks, notes=notes, warnings=warnings)
+    return Chapter(
+        title=title,
+        blocks=blocks,
+        notes=notes,
+        warnings=warnings,
+        author_line=_author_line(raw_lines),
+    )
+
+
+def _author_line(raw_lines: Sequence[RawLine]) -> str:
+    """Return the Regular ~14 pt text on the first page (the printed author line)."""
+    if not raw_lines:
+        return ""
+    first_page = raw_lines[0].page
+    parts: list[str] = []
+    for line in raw_lines:
+        span = dominant_span(line)
+        if (
+            line.page == first_page
+            and span.font.startswith("EuclidCircularB")
+            and not ("Semibold" in span.font or "Bold" in span.font)
+            and 13 <= span.size < 16
+        ):
+            parts.append(line.text)
+    return _clean(" ".join(parts))
+
+
+_AUTHOR_WINDOW = 40  # characters allowed per author between the first and last name
+
+
+def _printed_order(names: Sequence[str], source: str) -> tuple[str, ...] | None:
+    """Order ``names`` by their closest joint appearance in ``source``, if any."""
+    text = source.replace(SOFT_HYPHEN, "").replace("\xa0", " ")
+    occurrences: dict[str, list[int]] = {}
+    for name in names:
+        family = name.split()[-1]
+        found = [m.start() for m in re.finditer(re.escape(family), text)]
+        if not found:
+            return None
+        occurrences[name] = found
+    best: tuple[str, ...] | None = None
+    best_span = _AUTHOR_WINDOW * len(names)
+    for anchor in occurrences[names[0]]:
+        picks = {
+            name: min(positions, key=lambda position: abs(position - anchor))
+            for name, positions in occurrences.items()
+        }
+        span = max(picks.values()) - min(picks.values())
+        ordered = sorted(names, key=lambda name: picks[name])
+        # A line break between two names means a list, such as an alphabetical
+        # title page, and not an author line.
+        on_one_line = not any("|" in text[picks[a] : picks[b]] for a, b in pairwise(ordered))
+        if on_one_line and span <= best_span:
+            best, best_span = tuple(ordered), span
+    return best
+
+
+def order_authors(names: Sequence[str], *sources: str) -> tuple[str, ...]:
+    """Order authors as printed in the book.
+
+    Each source is printed text, for example the chapter's author line or the
+    volume front matter. A ``|`` marks a line break. The first source that
+    names every author close together on one line sets the order. Without
+    such a source the order is alphabetical by family name, so the result
+    never depends on the API response order.
+
+    >>> order_authors(["Anina Zahn", "Silas Gusset"], "Silas Gusset, Anina Zahn")
+    ('Silas Gusset', 'Anina Zahn')
+    >>> order_authors(["Anina Zahn", "Silas Gusset"], "", "Einleitung | Silas Gusset, Anina Zahn")
+    ('Silas Gusset', 'Anina Zahn')
+    >>> order_authors(["Anina Zahn", "Silas Gusset"], "Silas Gusset | Anina Zahn")
+    ('Silas Gusset', 'Anina Zahn')
+    >>> order_authors(["Zoe Zahn", "Anna Bauer"], "Einleitung")
+    ('Anna Bauer', 'Zoe Zahn')
+    """
+    if len(names) > 1:
+        for source in sources:
+            ordered = _printed_order(names, source)
+            if ordered is not None:
+                return ordered
+    return tuple(sorted(names, key=lambda name: (name.split()[-1].casefold(), name)))
 
 
 def _demote_late_leads(
