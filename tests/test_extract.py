@@ -10,10 +10,12 @@ from sgb_html.extract import (
     Heading,
     Kind,
     Marker,
+    Note,
     Paragraph,
     RawLine,
     RawSpan,
     TextRun,
+    _prune_orphan_notes,
     classify,
     extract_chapter,
     iter_raw_lines,
@@ -676,3 +678,104 @@ class TestNotes:
         chapter = extract_chapter([page])
         (note,) = chapter.notes
         assert note.text == "Anfang. Fortsetzung fett"
+
+
+class TestLateLeadAndOrphanNotes:
+    """Regression tests for issue #7."""
+
+    def test_lead_style_label_after_body_is_dropped(self) -> None:
+        opener = FakePage(
+            [
+                line(span("Der Lead-Text.", "EuclidCircularB-Regular", 12.5), y0=120),
+                body("Der erste Satz.", y0=170),
+            ]
+        )
+        infographic = FakePage(
+            [
+                line(span("1876", "EuclidCircularB-Regular", 12.0), y0=62),
+                body("Weiterer Text.", y0=100),
+                line(span("1925", "EuclidCircularB-Regular", 12.0), y0=294),
+            ]
+        )
+        chapter = extract_chapter([opener, infographic])
+        lead = chapter.blocks[0]
+        assert isinstance(lead, Paragraph) and lead.lead
+        assert paragraph_text(lead) == "Der Lead-Text."
+
+    def test_lead_style_prose_after_body_is_kept(self) -> None:
+        opener = FakePage(
+            [
+                line(span("Der Lead-Text.", "EuclidCircularB-Regular", 12.5), y0=120),
+                body("Der erste Satz.", y0=170),
+            ]
+        )
+        essay = FakePage([line(span("Einleitung eines Essays.", "EuclidCircularB-Regular", 12.5))])
+        chapter = extract_chapter([opener, essay])
+        assert paragraph_text(chapter.blocks[0]) == "Der Lead-Text. Einleitung eines Essays."
+
+    def test_duplicate_note_without_marker_is_dropped(self) -> None:
+        page = FakePage(
+            [
+                body("Satz.", y0=50),
+                line(span("Satz.", "Practice-Regular", 10.4), y0=60),
+                note_start(1, "Huber 2014, S. 404.", y0=100),
+                note_start(2, "Andere Note.", y0=120),
+                note_start(1, "Huber 2014, S. 404.", y0=140),
+            ]
+        )
+        page.lines[1]["spans"].append(span("1", "Practice-Bold", 5.2, superscript=True))
+        chapter = extract_chapter([page])
+        assert [(n.number, n.text) for n in chapter.notes] == [
+            (1, "Huber 2014, S. 404."),
+            (2, "Andere Note."),
+        ]
+        assert any("orphan endnote 1 dropped" in w for w in chapter.warnings)
+
+    def test_orphan_note_with_unique_text_is_kept_and_warned(self) -> None:
+        page = FakePage([body("Lauftext.", y0=50), note_start(7, "Einmalige Note.", y0=100)])
+        chapter = extract_chapter([page])
+        assert [(n.number, n.text) for n in chapter.notes] == [(7, "Einmalige Note.")]
+        assert any("endnote 7 has no marker" in w for w in chapter.warnings)
+
+    def test_reused_number_with_matching_markers_is_kept(self) -> None:
+        marked = line(
+            span("Text", "Practice-Regular", 10.4),
+            span("1", "Practice-Bold", 5.2, superscript=True),
+            y0=50,
+        )
+        again = line(
+            span("Mehr", "Practice-Regular", 10.4),
+            span("1", "Practice-Bold", 5.2, superscript=True),
+            y0=70,
+        )
+        page = FakePage(
+            [
+                marked,
+                again,
+                note_start(1, "Gleich.", y0=100),
+                note_start(1, "Gleich.", y0=120),
+            ]
+        )
+        chapter = extract_chapter([page])
+        assert [n.number for n in chapter.notes] == [1, 1]
+        assert not any("endnote" in w for w in chapter.warnings)
+
+    def test_markers_inside_aside_count_for_notes(self) -> None:
+        aside = Aside([Paragraph([TextRun("Text"), Marker(4)])])
+        warnings: list[str] = []
+        kept = _prune_orphan_notes([Note(4, "Seitenleiste.")], [aside], warnings)
+        assert [n.number for n in kept] == [4]
+        assert warnings == []
+
+    def test_duplicate_orphans_keep_first_and_drop_repeat(self) -> None:
+        page = FakePage(
+            [
+                body("Lauftext.", y0=50),
+                note_start(24, "Huber 2014, S. 404.", y0=100),
+                note_start(1, "Huber 2014, S. 404.", y0=120),
+            ]
+        )
+        chapter = extract_chapter([page])
+        assert [(n.number, n.text) for n in chapter.notes] == [(24, "Huber 2014, S. 404.")]
+        assert any("endnote 24 has no marker" in w for w in chapter.warnings)
+        assert any("orphan endnote 1 dropped" in w for w in chapter.warnings)
