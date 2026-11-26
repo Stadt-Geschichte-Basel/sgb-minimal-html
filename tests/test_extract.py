@@ -19,6 +19,7 @@ from sgb_html.extract import (
     classify,
     extract_chapter,
     iter_raw_lines,
+    order_authors,
 )
 
 
@@ -779,3 +780,62 @@ class TestLateLeadAndOrphanNotes:
         assert [(n.number, n.text) for n in chapter.notes] == [(24, "Huber 2014, S. 404.")]
         assert any("endnote 24 has no marker" in w for w in chapter.warnings)
         assert any("orphan endnote 1 dropped" in w for w in chapter.warnings)
+
+
+class TestAuthors:
+    def test_author_line_is_captured_from_first_page(self) -> None:
+        page = FakePage(
+            [
+                line(span("David Brönnimann,", "EuclidCircularB-Regular", 14.0), y0=28),
+                line(span("Philippe\xa0Rentzel", "EuclidCircularB-Regular", 14.0), y0=46),
+                line(span("Kapitel", "EuclidCircularB-Semibold", 14.0), y0=80),
+                body("Text.", y0=120),
+            ]
+        )
+        later = FakePage([line(span("Anderer Name", "EuclidCircularB-Regular", 14.0), y0=28)])
+        chapter = extract_chapter([page, later])
+        assert chapter.author_line == "David Brönnimann, Philippe\xa0Rentzel"
+
+    def test_empty_chapter_has_no_author_line(self) -> None:
+        assert extract_chapter([]).author_line == ""
+
+    def test_order_follows_printed_line(self) -> None:
+        names = ["Philippe Rentzel", "David Brönnimann"]
+        assert order_authors(names, "David Brönnimann, Philippe Rentzel") == (
+            "David Brönnimann",
+            "Philippe Rentzel",
+        )
+
+    def test_order_ignores_soft_hyphens_and_nbsp(self) -> None:
+        names = ["Thomas K. Kuhn", "Susanne Bennewitz"]
+        printed = f"Thomas K.\xa0Kuhn, Susanne Benne{SOFT_HYPHEN}witz"
+        assert order_authors(names, printed) == ("Thomas K. Kuhn", "Susanne Bennewitz")
+
+    def test_partial_line_falls_back_to_alphabetical(self) -> None:
+        names = ["Zoe Zahn", "Anna Bauer"]
+        assert order_authors(names, "Einleitung") == ("Anna Bauer", "Zoe Zahn")
+
+    def test_second_source_is_used_when_first_lacks_names(self) -> None:
+        names = ["Zoe Zahn", "Anna Bauer"]
+        assert order_authors(names, "Einleitung", "Info | Zoe Zahn, Anna Bauer") == (
+            "Zoe Zahn",
+            "Anna Bauer",
+        )
+
+    def test_names_on_separate_lines_do_not_count(self) -> None:
+        names = ["Zoe Zahn", "Anna Bauer"]
+        assert order_authors(names, "Zoe Zahn | Anna Bauer") == ("Anna Bauer", "Zoe Zahn")
+
+    def test_names_far_apart_do_not_count(self) -> None:
+        names = ["Zoe Zahn", "Anna Bauer"]
+        far = "Zoe Zahn" + " x" * 200 + "Anna Bauer"
+        assert order_authors(names, far) == ("Anna Bauer", "Zoe Zahn")
+
+    def test_closest_occurrence_wins(self) -> None:
+        names = ["Zoe Zahn", "Anna Bauer"]
+        text = "Anna Bauer" + " x" * 200 + "Zoe Zahn, Anna Bauer"
+        assert order_authors(names, text) == ("Zoe Zahn", "Anna Bauer")
+
+    def test_single_and_no_names(self) -> None:
+        assert order_authors(["Anna Bauer"], "Anna Bauer") == ("Anna Bauer",)
+        assert order_authors([], "Irgendwas") == ()

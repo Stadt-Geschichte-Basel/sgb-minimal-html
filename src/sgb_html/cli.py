@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
 
 import pymupdf
@@ -18,6 +19,7 @@ from sgb_html.extract import (
     Paragraph,
     TextRun,
     extract_chapter,
+    order_authors,
 )
 from sgb_html.omp import (
     ApiChapter,
@@ -99,11 +101,21 @@ def _jobs(settings: Settings, client: OmpClient, doi: str | None) -> list[Chapte
     return jobs
 
 
-def _meta_for(job: ChapterJob) -> ChapterMeta:
+@cache
+def _front_matter(volume_pdf_dir: Path) -> str:
+    """Text of the first pages of the full-volume PDF: title page and contents."""
+    pdfs = sorted(volume_pdf_dir.glob("sgb-0?-*.pdf"))
+    if not pdfs:
+        return ""
+    with pymupdf.open(pdfs[0]) as doc:
+        return " ".join(page.get_text().replace("\n", " | ") for page in doc.pages(0, 12))
+
+
+def _meta_for(job: ChapterJob, chapter: Chapter, front_matter: str = "") -> ChapterMeta:
     return ChapterMeta(
         title=_de(job.chapter.title),
         subtitle=_de(job.chapter.subtitle),
-        authors=job.chapter.author_names,
+        authors=order_authors(job.chapter.author_names, chapter.author_line, front_matter),
         doi=job.chapter.doi,
         pages=job.chapter.pages or "",
         license_url=job.publication.chapterLicenseUrl,
@@ -128,7 +140,9 @@ def convert(doi: str | None = typer.Option(None, help="Convert a single chapter 
     client = OmpClient(settings.base_url, settings.apikey)
     for job in _jobs(settings, client, doi):
         chapter = _extract(job)
-        html = render_chapter(chapter, _meta_for(job))
+        html = render_chapter(
+            chapter, _meta_for(job, chapter, _front_matter(settings.pdf_dir / job.volume_dir))
+        )
         out = _output_path(settings, job)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(html, encoding="utf-8")
