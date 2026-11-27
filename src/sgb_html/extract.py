@@ -992,7 +992,6 @@ def _appendix_flow(classified: list[tuple[Kind, RawLine]]) -> list[Block]:
     for column in _column_runs([line for _, line in kept]):
         entries = [li for li in column if by_id[id(li)] is Kind.ENTRY]
         entry_base = min((li.x0 for li in entries), default=0.0)
-        hanging = any(li.x0 > entry_base + _PARAGRAPH_INDENT for li in entries)
         widest = max((li.x1 for li in entries), default=0.0)
         for line in column:
             kind = by_id[id(line)]
@@ -1020,7 +1019,8 @@ def _appendix_flow(classified: list[tuple[Kind, RawLine]]) -> list[Block]:
                     blocks.append(Heading(text, level=level))
                 heading_line = line
                 if level == 2:
-                    in_bios = text.startswith("Autor")
+                    last = blocks[-1]
+                    in_bios = isinstance(last, Heading) and last.text.startswith("Autor")
             elif kind is Kind.BODY:
                 leading = 2.8 * dominant_span(line).size
                 same_column = previous is not None and by_id.get(id(previous)) is Kind.BODY
@@ -1028,7 +1028,7 @@ def _appendix_flow(classified: list[tuple[Kind, RawLine]]) -> list[Block]:
                     close()
                 _append_line(current, line, drop_anchors=False)
             else:
-                continues = in_bios and not hanging and not _NOTE_START_RE.match(line.text)
+                continues = in_bios and not _NOTE_START_RE.match(line.text)
                 if (
                     current
                     and line.x0 <= entry_base + _PARAGRAPH_INDENT

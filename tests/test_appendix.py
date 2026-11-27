@@ -155,6 +155,29 @@ class TestAppendixFlow:
         assert texts(chapter.blocks) == ["h3:Antike Autoren", "Aristoteles 12, 47"]
 
 
+def test_biographies_join_lines_after_a_hanging_bibliography_and_wrapped_heading() -> None:
+    semibold = "EuclidCircularB-Semibold"
+    page = FakePage(
+        [
+            entry("Buch, Titel, Basel", x0=28, y0=0),
+            entry("1999.", x0=37, y0=9),
+            line(span("Autorinnen", semibold, 9.5), x0=28, y0=26),
+            line(span("und Autoren", semibold, 9.5), x0=28, y0=36),
+            entry("Anna Muster, Historikerin", x0=28, y0=60),
+            line(span("in Basel.", "EuclidCircularB-Regular", 6.5), x0=28, y0=69, width=60),
+            entry("Bert Beispiel, Dr.", x0=28, y0=78),
+            line(span("in Bern.", "EuclidCircularB-Regular", 6.5), x0=28, y0=87, width=60),
+        ]
+    )
+    chapter = extract_chapter([page])
+    assert texts(chapter.blocks) == [
+        "Buch, Titel, Basel 1999.",
+        "h2:Autorinnen und Autoren",
+        "Anna Muster, Historikerin in Basel.",
+        "Bert Beispiel, Dr. in Bern.",
+    ]
+
+
 def test_aside_only_page_flushes_before_next_page() -> None:
     """Covers the main flow: an aside page with no open paragraph."""
     from conftest import body
