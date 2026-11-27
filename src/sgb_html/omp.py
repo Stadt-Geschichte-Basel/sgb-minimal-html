@@ -42,7 +42,7 @@ class ApiAuthor(BaseModel):
 
     @property
     def display_name(self) -> str:
-        return f"{_de(self.givenName)} {_de(self.familyName)}".strip()
+        return " ".join(f"{_de(self.givenName)} {_de(self.familyName)}".split())
 
 
 class ApiDoi(BaseModel):

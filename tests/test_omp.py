@@ -8,7 +8,7 @@ from typing import Any
 
 import httpx2
 
-from sgb_html.omp import ApiChapter, ApiPublication, ApiSubmission, OmpClient
+from sgb_html.omp import ApiAuthor, ApiChapter, ApiPublication, ApiSubmission, OmpClient
 
 SUBMISSION: dict[str, Any] = {
     "id": 85,
@@ -102,6 +102,12 @@ def test_chapter_author_list_form_and_empty() -> None:
     assert chapter.author_names == ("A B",)
     assert ApiChapter.model_validate({"id": 2}).author_names == ()
     assert ApiChapter.model_validate({"id": 3}).doi == ""
+
+
+def test_author_name_collapses_stray_whitespace() -> None:
+    # OMP stores a trailing space in some given names ("Noëmi ").
+    author = ApiAuthor.model_validate({"givenName": "Noëmi ", "familyName": " Crain  Merz"})
+    assert author.display_name == "Noëmi Crain Merz"
 
 
 def test_upload_and_attach(tmp_path: Path) -> None:
