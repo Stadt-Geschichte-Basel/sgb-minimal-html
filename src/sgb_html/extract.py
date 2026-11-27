@@ -34,6 +34,7 @@ _NOTE_START_RE = re.compile(r"^\s*(\d+) ?\t\s*(.*)$")
 _COLUMN_GAP = 50.0
 _PARAGRAPH_INDENT = 4.0
 _MAX_PARAGRAPH_INDENT = 40.0
+_COLUMN_TOLERANCE = 4.0  # x-distance in points that still counts as the same column
 
 
 class Kind(Enum):
@@ -44,6 +45,7 @@ class Kind(Enum):
     HEADING = "heading"
     BODY = "body"
     ASIDE_HEAD = "aside_head"
+    SUBHEAD = "subhead"
     ASIDE_BODY = "aside_body"
     NOTE = "note"
     ENTRY = "entry"
@@ -663,7 +665,7 @@ def _main_flow(classified: list[tuple[Kind, RawLine]]) -> list[Block]:
         main = [
             (kind, line)
             for kind, line in classified
-            if line.page == page and kind in (Kind.HEADING, Kind.BODY, Kind.LEAD)
+            if line.page == page and kind in (Kind.HEADING, Kind.SUBHEAD, Kind.BODY, Kind.LEAD)
         ]
         main.sort(key=lambda item: item[1].y0)
         for kind, line in main:
@@ -682,13 +684,14 @@ def _main_flow(classified: list[tuple[Kind, RawLine]]) -> list[Block]:
             if current_is_lead:
                 close_paragraph()
                 current_is_lead = False
-            if kind is Kind.HEADING:
+            if kind in (Kind.HEADING, Kind.SUBHEAD):
                 close_paragraph()
+                level = 2 if kind is Kind.HEADING else 3
                 heading_text = _plain_text(line)
-                if blocks and isinstance(blocks[-1], Heading) and blocks[-1].level == 2:
+                if blocks and isinstance(blocks[-1], Heading) and blocks[-1].level == level:
                     blocks[-1].text += _glue(blocks[-1].text, heading_text) + heading_text
                 else:
-                    blocks.append(Heading(heading_text))
+                    blocks.append(Heading(heading_text, level=level))
             else:
                 if current and _starts_paragraph(line, base_x[line.page], previous):
                     close_paragraph()
@@ -846,6 +849,7 @@ def plan_lines(raw_lines: Sequence[RawLine]) -> LinePlan:
             classified.append((kind, line))
 
     classified = _demote_late_leads(classified)
+    classified = _promote_subheadings(classified)
     if any(kind in (Kind.BODY, Kind.LEAD) for kind, _ in classified):
         kept = {id(line): kind for kind, line in classified}
         decisions = [(line, kept.get(id(line), Kind.DROP)) for line in raw_lines]
@@ -1033,6 +1037,41 @@ def _demote_late_leads(
         flush()
         result.append((kind, line))
     flush()
+    return result
+
+
+def _promote_subheadings(
+    classified: list[tuple[Kind, RawLine]],
+) -> list[tuple[Kind, RawLine]]:
+    """Turn in-text subheadings, wrongly read as sidebar titles, into SUBHEAD.
+
+    A sidebar title is followed by sidebar text. An in-text subheading is
+    followed by body text in the same column.
+
+    >>> font = "EuclidCircularB-Semibold"
+    >>> head = RawLine(1, 114.0, 40.0, (RawSpan("Zünfte", font, 9.5),))
+    >>> span = RawSpan("Im Verlauf", "Practice-Regular", 10.4)
+    >>> text = RawLine(1, 113.0, 63.0, (span,))
+    >>> result = _promote_subheadings([(Kind.ASIDE_HEAD, head), (Kind.BODY, text)])
+    >>> [kind.value for kind, _ in result]
+    ['subhead', 'body']
+    >>> _promote_subheadings([(Kind.ASIDE_HEAD, head)])[0][0].value
+    'aside_head'
+    """
+    result: list[tuple[Kind, RawLine]] = []
+    for kind, line in classified:
+        if kind is Kind.ASIDE_HEAD:
+            below = [
+                (other_kind, other)
+                for other_kind, other in classified
+                if other.page == line.page
+                and other.y0 > line.y0
+                and abs(other.x0 - line.x0) < _COLUMN_TOLERANCE
+                and other_kind is not Kind.ASIDE_HEAD
+            ]
+            if below and min(below, key=lambda item: item[1].y0)[0] is Kind.BODY:
+                kind = Kind.SUBHEAD
+        result.append((kind, line))
     return result
 
 
