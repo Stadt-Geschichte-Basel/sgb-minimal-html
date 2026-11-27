@@ -617,10 +617,10 @@ def _build_aside(lines: list[tuple[Kind, RawLine]]) -> Aside:
         else:
             prose.append(line)
     aside_blocks.extend(_build_paragraphs(prose, small=True))
-    if len(aside_blocks) > 1 and isinstance(aside_blocks[-1], Heading):
+    last = aside_blocks[-1] if len(aside_blocks) > 1 else None
+    if isinstance(last, Heading):
         # A title with no text after it is the author line at the end of the sidebar.
-        last = aside_blocks.pop()
-        aside_blocks.append(Paragraph([TextRun(last.text, False)]))
+        aside_blocks[-1] = Paragraph([TextRun(last.text, False)])
     return Aside(aside_blocks)
 
 
