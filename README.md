@@ -2,7 +2,7 @@
 
 > **Minimal text-only HTML editions of the Stadt.Geschichte.Basel chapters**
 
-**sgb-minimal-html** converts the chapter PDFs of the nine-volume book series [Stadt.Geschichte.Basel](https://www.stadtgeschichtebasel.ch/) (Christoph Merian Verlag) into minimal, text-only HTML editions — no images, no styling, just semantically structured text with linked endnotes — and publishes them as HTML publication formats on the Open Monograph Press instance [emono.unibas.ch](https://emono.unibas.ch/stadtgeschichtebasel/).
+**sgb-minimal-html** converts the chapter PDFs of the nine-volume book series [Stadt.Geschichte.Basel](https://www.stadtgeschichtebasel.ch/) (Christoph Merian Verlag) into minimal, text-only HTML editions — no images, no styling, just semantically structured text with linked endnotes — and publishes them as HTML publication formats on the Open Monograph Press instance [emono.unibas.ch](https://emono.unibas.ch/stadtgeschichtebasel/). The same text is in the description of the chapter records on [Zenodo](https://zenodo.org/communities/stadt-geschichte-basel/).
 
 [![GitHub issues](https://img.shields.io/github/issues/Stadt-Geschichte-Basel/sgb-minimal-html.svg)](https://github.com/Stadt-Geschichte-Basel/sgb-minimal-html/issues)
 [![GitHub stars](https://img.shields.io/github/stars/Stadt-Geschichte-Basel/sgb-minimal-html.svg)](https://github.com/Stadt-Geschichte-Basel/sgb-minimal-html/stargazers)
@@ -19,6 +19,7 @@
 - 📑 **Appendix mode** for bibliographies, image credits, registers, and author notes with hanging-indent entries
 - 🧹 **Clean text** — de-hyphenation, paragraphs that flow across page breaks and around floated boxes, figure anchors removed
 - 🏷️ **Rich metadata** from the OMP API: `citation_*` meta tags, DOI, pages, authors, CC license
+- 👥 **Author order from the printed book** — the chapter author line, the volume front matter, the printed contents, or the alphabet
 - ✅ **Quality checks** — word-count ratios against the raw PDF text and marker/endnote consistency per chapter
 - 🚀 **Idempotent publishing** to Open Monograph Press via its REST API
 
@@ -27,11 +28,12 @@
 **📖 [Full Documentation](https://dokumentation.stadtgeschichtebasel.ch/sgb-minimal-html/)**
 
 - [Overview and Quick Start](https://dokumentation.stadtgeschichtebasel.ch/sgb-minimal-html/)
-- [Extraction Methodology](https://dokumentation.stadtgeschichtebasel.ch/sgb-minimal-html/methodology.html)
+- [Extraction Methodology](https://dokumentation.stadtgeschichtebasel.ch/sgb-minimal-html/methodology.html) — typography rules, author order, publishing, and how to refresh published copies
 
 ## Data
 
 - `html/volume-0X/sgb-XX.YY-NNNNNN.html` — the generated chapter editions, named by their DOI suffix (e.g. [`10.21255/sgb-01.01-439115`](https://doi.org/10.21255/sgb-01.01-439115)). They are published on [emono.unibas.ch](https://emono.unibas.ch/stadtgeschichtebasel/) as HTML publication formats alongside the PDFs.
+- Zenodo — the community [`stadt-geschichte-basel`](https://zenodo.org/communities/stadt-geschichte-basel/) holds a record for each chapter and volume. The description of a chapter record holds the HTML edition.
 - `pdf/dois.txt` — the DOIs of all volumes and chapters. The chapter PDFs themselves are not part of this repository; they are available open access via their DOIs.
 
 The book content is © Stadt.Geschichte.Basel / Christoph Merian Verlag and licensed under [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/). Full bibliographic records: see the [catalog](https://emono.unibas.ch/stadtgeschichtebasel/catalog).
@@ -75,6 +77,9 @@ uv run sgb-html check
 
 # Build a review pack (ledger, lint, page images) in .review/ for one chapter
 uv run sgb-html review-pack --doi sgb-08.05-264155
+
+# Flag galleys whose genre differs from the per-volume norm
+uv run sgb-html check-genres
 
 # Attach the HTML files to each volume's HTML publication format in OMP
 uv run sgb-html upload --dry-run   # print planned API calls first

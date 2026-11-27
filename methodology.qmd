@@ -11,7 +11,7 @@ The Stadt.Geschichte.Basel series uses one consistent typographic system across 
 | ------------------------------------ | ------------------------------------------ | ------------------------- |
 | EuclidCircularB-Semibold ≥ 18 pt     | chapter title                              | cross-check with OMP      |
 | EuclidCircularB-Semibold ~14 pt      | section headings                           | `<h2>`                    |
-| EuclidCircularB-Regular ~14 pt       | author line on the opener                  | dropped (metadata via API)|
+| EuclidCircularB-Regular ~14 pt       | author line on the opener                  | sets the author order, then dropped |
 | EuclidCircularB-Regular ~12.5 pt     | lead (intro) paragraph                     | `<p class="lead">`        |
 | Practice ~10.4 pt                    | body text (Italic → `<em>`)                | `<p>`                     |
 | Practice-Extrabold ~11 pt            | pull quotes (duplicated design text)       | dropped                   |
@@ -33,9 +33,26 @@ Lines in fonts foreign to the series (e.g. Helvetica) are OCR layers inside repr
 - **Tables, maps, and charts** — tables are not part of the edition. Text from maps and charts (labels with digits, capitals, or repeated words) is dropped.
 - **Figure anchors** — inline references like `[7 | 8]` point to images that are not part of the edition and are removed together with the figures, captions, and pull quotes.
 
+## Authors and author order
+
+The OMP API gives the author names of a chapter. It does not give a usable order. By default every author has position 0, so OMP shows the authors in random order until an administrator sets the order.
+
+The converter takes the order from the printed book. It uses the first source that names all authors of the chapter:
+
+1. The author line on the first page of the chapter PDF.
+2. One line in the first 12 pages of the volume PDF that holds all names, for example "Herausgegeben von A und B".
+3. The printed contents of the volume. The contents list each article with its authors. The converter orders the authors by their first article.
+4. Alphabetical order by family name.
+
+A line break between two names means a list, not an author line. The converter ignores such a match. For example, a title page can list all authors alphabetically.
+
+The author line of the chapter has priority over the contents. The contents list articles. An article can have a different first author than the chapter.
+
+Volumes 8 and 9 print no author line on their chapter pages. Volume 9 lists the authors of each article in its contents. Volume 8 does not, so its chapters use the alphabetical order.
+
 ## Appendix chapters
 
-Author biographies have no hanging indents. A short line or a vertical gap ends a biography. Wrapped heading lines join; headings far apart stay separate. Image credits and index sub-entries are still not split (issue #34).
+Author biographies have no hanging indents. A short line or a vertical gap ends a biography. Wrapped heading lines join. Headings far apart stay separate. The extractor does not yet split image credits and index sub-entries.
 
 Each volume's final chapter (*Anhang*) — bibliography, image credits, registers, author notes — uses a different typographic register set almost entirely in small EuclidCircularB. When a chapter contains no body text in the series' body font, the extractor switches to an appendix mode: ~9.5 pt Semibold section headings, ~9 pt intro prose (split on vertical gaps), and ~6.5 pt entries with hanging indents, read column by column.
 
@@ -75,7 +92,33 @@ Each chapter edition is attached to its volume's HTML publication format via the
 2. The publication-format association (`assocType`/`assocId`/`genreId`) must be set **at upload time**; the edit endpoint rejects `assocType` changes.
 3. Every `PUT`/`DELETE` on a file needs `stageId=5` (production workflow stage) as a query parameter.
 
-The chapter link (`chapterId`), visibility, and open-access sales type are set in a second step. Uploads are idempotent: files already attached under the same name are skipped unless `--replace` is given, in which case the old galley is deleted first.
+The chapter link (`chapterId`), visibility, and open-access sales type are set in a second step. Uploads are idempotent: files already attached under the same name are skipped unless `--replace` is given, in which case the old galley is deleted first. A replaced galley gets a new file ID and a new download URL. Link to the chapter page, not to the file.
+
+OMP 3.4 has no REST route for the order of chapter authors. The chapter grid is read-only while a publication is published. An OMP administrator must set the position of each author. DataCite keeps its own creator list. Its order changes only when the press updates the DOI metadata.
+
+## Publishing to Zenodo
+
+Each chapter and each volume has a record in the Zenodo community `stadt-geschichte-basel`. A record keeps the existing DOI `10.21255/…` and holds the PDF of the chapter or volume.
+
+The description of a chapter record holds the HTML edition. It contains the content of `<main>` and the endnotes under the heading `Anmerkungen`. Zenodo limits the HTML:
+
+- Zenodo removes the attributes `id`, `role`, and `value`. It also removes the elements `<aside>` and `<section>`.
+- Zenodo keeps `<a name>`, `<ol>`, `<li>`, `<sup>`, and `class`. Markers and endnotes therefore use anchors such as `<a name="fn12"></a>`.
+- Zenodo changes typographic quotation marks to straight marks and removes zero-width spaces. Compare the text after normalization, not the bytes.
+
+The community uses closed review. A curator accepts the review request of a record. The acceptance publishes the record.
+
+A published record cannot be deleted, and its PDF cannot be replaced. A curator can still edit the description, the creators, and the keywords.
+
+## Refresh the published copies
+
+A change to the extractor changes `html/`. The same text exists in three more places: the OMP galleys, the Zenodo records, and the website. Refresh them in this order:
+
+1. Merge the change into `main`, then run `uv run sgb-html convert`.
+2. Replace the galleys in OMP with `uv run sgb-html upload --replace --doi <DOI suffix>`.
+3. Update the description and the creators of the Zenodo records.
+4. Regenerate the chapter pages of the website with `scripts/generate_volumes.py` in the repository `stadt-geschichte-basel.github.io`.
+5. Compare each copy with `html/`. Check the text, the number of links, and the number of endnotes.
 
 ## Provenance
 

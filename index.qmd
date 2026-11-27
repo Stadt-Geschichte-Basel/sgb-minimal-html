@@ -15,7 +15,7 @@ subtitle: 'Minimal text-only HTML editions of the Stadt.Geschichte.Basel chapter
 - 🔗 **Linked endnotes** with back-references
 - 📑 **Appendix mode** for bibliographies, image credits, registers, and author notes
 - 🧹 **Clean text** — de-hyphenation and paragraphs that flow across page breaks
-- 🏷️ **Rich metadata** from the OMP API (`citation_*` meta tags, DOI, pages, authors, license)
+- 🏷️ **Rich metadata** from the OMP API (`citation_*` meta tags, DOI, pages, authors, license), with the authors in the order of the printed book
 - ✅ **Quality checks** per chapter and 🚀 **idempotent publishing** via the OMP REST API
 :::
 
@@ -61,6 +61,14 @@ uv run sgb-html check
 
 Reports, per chapter, the word-count ratio of extracted text against the raw PDF text layer and verifies that every footnote marker has a matching endnote. Exits non-zero if any chapter needs review.
 
+### Check genres
+
+```bash
+uv run sgb-html check-genres
+```
+
+Flags galley files whose genre differs from the norm of their volume. Exits non-zero if it finds a deviation.
+
 ### Upload
 
 ```bash
@@ -69,7 +77,7 @@ uv run sgb-html upload             # idempotent; skips already attached files
 uv run sgb-html upload --replace   # delete and re-upload existing galleys
 ```
 
-Attaches each chapter's HTML file to the corresponding volume's HTML publication format in OMP, linked to its chapter, viewable, and open access. See the [methodology page](methodology.qmd) for the API details.
+Attaches each chapter's HTML file to the corresponding volume's HTML publication format in OMP, linked to its chapter, viewable, and open access. See the [methodology page](methodology.qmd) for the API details. The page also describes the Zenodo records, the author order, and how to refresh published copies.
 
 ## Development
 
