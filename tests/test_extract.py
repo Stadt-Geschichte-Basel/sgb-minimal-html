@@ -1142,3 +1142,18 @@ class TestDoiLines:
         entry = raw("1955, S. 169–187, https://doi.org/10.5169/seals-783195.", font, 6.5)
         assert classify(foot) is Kind.DROP
         assert classify(entry) is Kind.NOTE
+
+
+class TestSectionByline:
+    def test_byline_stands_under_its_heading(self) -> None:
+        page = FakePage(
+            [
+                line(span("Abschnitt", "EuclidCircularB-Semibold", 14.0), x0=56.0, y0=36),
+                line(span("Max Muster", "EuclidCircularB-Regular", 8.5), x0=57.0, y0=90),
+                body("Haupttext.", y0=120, x0=56.0),
+            ]
+        )
+        heading, byline, text = extract_chapter([page]).blocks
+        assert heading == Heading("Abschnitt")
+        assert paragraph_text(byline) == "Max Muster"
+        assert paragraph_text(text) == "Haupttext."
