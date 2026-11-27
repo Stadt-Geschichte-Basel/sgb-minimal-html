@@ -60,7 +60,7 @@ Do not report these as lost text.
 - Running heads and page numbers.
 - Pull quotes. They repeat text from the body.
 - Text inside maps, charts, and photos.
-- Author lines on the first page. The HTML takes authors from a database.
+- Author lines on the first page. The HTML takes the names from OMP. The order follows the printed book.
 
 ## What the HTML does on purpose
 
