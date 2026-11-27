@@ -29,11 +29,12 @@ from typing import Protocol
 
 SOFT_HYPHEN = "­"
 
-_DOI_RE = re.compile(r"https?://doi\.org/")
+_DOI_RE = re.compile(r"^\s*https?://doi\.org/10\.21255/sgb-\S*\s*$")  # the chapter's running foot
 _NOTE_START_RE = re.compile(r"^\s*(\d+) ?\t\s*(.*)$")
 _COLUMN_GAP = 50.0
 _PARAGRAPH_INDENT = 4.0
 _MAX_PARAGRAPH_INDENT = 40.0
+_COLUMN_TOLERANCE = 4.0  # x-distance in points that still counts as the same column
 
 
 class Kind(Enum):
@@ -44,6 +45,7 @@ class Kind(Enum):
     HEADING = "heading"
     BODY = "body"
     ASIDE_HEAD = "aside_head"
+    SUBHEAD = "subhead"
     ASIDE_BODY = "aside_body"
     NOTE = "note"
     ENTRY = "entry"
@@ -234,6 +236,9 @@ def classify(line: RawLine) -> Kind:
             None,
         )
         if aside_span is not None:
+            # A whole line in Semibold is the sidebar title; Regular is sidebar text.
+            if heavy and 8.0 <= size < 8.8:
+                return Kind.ASIDE_HEAD
             return Kind.ASIDE_BODY
         if size >= 18:
             return Kind.TITLE
@@ -266,6 +271,37 @@ def _clean(text: str) -> str:
     return cleaned + SOFT_HYPHEN if keep_trailing else cleaned
 
 
+_URL_START_RE = re.compile(r"(?:https?://|www\.)")
+_URL_BREAK_CHARS = "/_=&?:-."
+
+
+def _is_wrapped_url(previous: str, upcoming: str) -> bool:
+    """True when a URL breaks at a line end and continues on the next line.
+
+    >>> _is_wrapped_url("siehe https://www.srf.ch/play/", "tv/video")
+    True
+    >>> _is_wrapped_url("https://www.srf.ch/play/tv", "abgerufen")
+    False
+    >>> _is_wrapped_url("https://www.srf.ch.", "Danach")
+    False
+    >>> _is_wrapped_url("https://doi.org/10.1016/S0277-3791(03)", "00083-0")
+    True
+    >>> _is_wrapped_url("", "x")
+    False
+    """
+    words = previous.split()
+    if not words or not upcoming:
+        return False
+    tail = words[-1]
+    if not _URL_START_RE.match(tail):
+        return False
+    if tail.endswith(")") and upcoming[0].isdigit():
+        return True  # a DOI such as ...3791(03) 00083-0
+    if tail[-1] not in _URL_BREAK_CHARS:
+        return False
+    return not (tail.endswith(".") and upcoming[0].isupper())
+
+
 def _glue(previous: str, upcoming: str = "") -> str:
     """Separator when continuing a paragraph on the next PDF line.
 
@@ -280,6 +316,8 @@ def _glue(previous: str, upcoming: str = "") -> str:
     if previous.endswith((SOFT_HYPHEN, "-")):
         return ""
     if previous.endswith("–") and upcoming[:1].isdigit():
+        return ""
+    if _is_wrapped_url(previous, upcoming):
         return ""
     return " "
 
@@ -297,6 +335,9 @@ def _line_inlines(line: RawLine, *, drop_anchors: bool = True) -> list[Inline]:
     for span in line.spans:
         text = span.text.replace("\t", " ")
         if not text.strip():
+            # A blank span (often inside a dropped figure anchor) still separates words.
+            if inlines and isinstance(inlines[-1], TextRun) and not inlines[-1].text.endswith(" "):
+                inlines[-1] = TextRun(inlines[-1].text + " ", inlines[-1].italic)
             continue
         digits = text.strip()
         if _is_marker_span(span):
@@ -339,7 +380,42 @@ def _trim_line(inlines: list[Inline]) -> list[Inline]:
     return trimmed
 
 
-def _append_line(inlines: list[Inline], line: RawLine, *, drop_anchors: bool = True) -> None:
+_KEEP_HYPHEN_BEFORE = {"und", "oder", "bis", "sowie", "resp.", "bzw."}
+
+
+def _drop_break_hyphen(previous: str, upcoming: str) -> str:
+    """Remove a hyphen that only marks a line break in small print.
+
+    Sidebars and notes print the break hyphen as a plain hyphen. A hyphen after
+    a lower-case letter before a lower-case word is a break, except in a
+    suspended compound such as "Kalt- und Warmzeiten".
+
+    >>> _drop_break_hyphen("um 640 ge-", "gründet")
+    'um 640 ge'
+    >>> _drop_break_hyphen("Fami" + SOFT_HYPHEN + "-", "lie")
+    'Fami\xad'
+    >>> _drop_break_hyphen("Moutier-", "Grandval"), _drop_break_hyphen("Kalt-", "und Warm")
+    ('Moutier-', 'Kalt-')
+    >>> _drop_break_hyphen("Ende", "x")
+    'Ende'
+    """
+    if previous.endswith(SOFT_HYPHEN + "-"):
+        return previous[:-1]
+    if (
+        len(previous) > 1
+        and previous.endswith("-")
+        and previous[-2].isalpha()
+        and previous[-2].islower()
+        and upcoming[:1].islower()
+        and upcoming.split()[0] not in _KEEP_HYPHEN_BEFORE
+    ):
+        return previous[:-1]
+    return previous
+
+
+def _append_line(
+    inlines: list[Inline], line: RawLine, *, drop_anchors: bool = True, small: bool = False
+) -> None:
     """Append a line's inlines, joining text across the line break.
 
     Soft hyphens are kept while accumulating (they decide the glue of the
@@ -353,6 +429,12 @@ def _append_line(inlines: list[Inline], line: RawLine, *, drop_anchors: bool = T
     if isinstance(previous, TextRun):
         upcoming = first.text if isinstance(first, TextRun) else ""
         glue = _glue(previous.text, upcoming)
+        if small:
+            kept = _drop_break_hyphen(previous.text, upcoming)
+            if kept != previous.text:
+                glue = ""
+                previous = TextRun(kept, previous.italic)
+                inlines[-1] = previous
         if isinstance(first, TextRun) and previous.italic == first.italic:
             inlines[-1] = TextRun(previous.text + glue + first.text, previous.italic)
             new_runs = new_runs[1:]
@@ -436,7 +518,9 @@ def _starts_paragraph(line: RawLine, base: float, previous: RawLine | None) -> b
     return any(_PARAGRAPH_INDENT < delta <= _MAX_PARAGRAPH_INDENT for delta in deltas)
 
 
-def _build_paragraphs(lines: Sequence[RawLine], *, lead: bool = False) -> list[Paragraph]:
+def _build_paragraphs(
+    lines: Sequence[RawLine], *, lead: bool = False, small: bool = False
+) -> list[Paragraph]:
     """Group consecutive lines into paragraphs using first-line indents."""
     paragraphs: list[Paragraph] = []
     base_x: dict[int, float] = {}
@@ -457,7 +541,7 @@ def _build_paragraphs(lines: Sequence[RawLine], *, lead: bool = False) -> list[P
         ):
             paragraphs.append(_paragraph(current, lead=lead))
             current = []
-        _append_line(current, line)
+        _append_line(current, line, small=small)
         previous = line
     if current:
         paragraphs.append(_paragraph(current, lead=lead))
@@ -511,7 +595,9 @@ def _build_notes(lines: Sequence[RawLine]) -> tuple[list[Note], list[str]]:
                 notes.append(Note(int(match.group(1)), _clean(match.group(2))))
             elif notes:
                 continuation = _plain_text(line)
-                joined = notes[-1].text + _glue(notes[-1].text, continuation) + continuation
+                kept = _drop_break_hyphen(notes[-1].text, continuation)
+                glue = "" if kept != notes[-1].text else _glue(kept, continuation)
+                joined = kept + glue + continuation
                 notes[-1] = Note(notes[-1].number, joined)
             else:
                 warnings.append(
@@ -527,7 +613,7 @@ def _build_aside(lines: list[tuple[Kind, RawLine]]) -> Aside:
     prose: list[RawLine] = []
     for kind, line in lines:
         if kind is Kind.ASIDE_HEAD:
-            aside_blocks.extend(_build_paragraphs(prose))
+            aside_blocks.extend(_build_paragraphs(prose, small=True))
             prose = []
             head = _plain_text(line)
             if aside_blocks and isinstance(aside_blocks[-1], Heading):
@@ -536,7 +622,11 @@ def _build_aside(lines: list[tuple[Kind, RawLine]]) -> Aside:
                 aside_blocks.append(Heading(head, level=3))
         else:
             prose.append(line)
-    aside_blocks.extend(_build_paragraphs(prose))
+    aside_blocks.extend(_build_paragraphs(prose, small=True))
+    last = aside_blocks[-1] if len(aside_blocks) > 1 else None
+    if isinstance(last, Heading):
+        # A title with no text after it is the author line at the end of the sidebar.
+        aside_blocks[-1] = Paragraph([TextRun(last.text, False)])
     return Aside(aside_blocks)
 
 
@@ -663,7 +753,7 @@ def _main_flow(classified: list[tuple[Kind, RawLine]]) -> list[Block]:
         main = [
             (kind, line)
             for kind, line in classified
-            if line.page == page and kind in (Kind.HEADING, Kind.BODY, Kind.LEAD)
+            if line.page == page and kind in (Kind.HEADING, Kind.SUBHEAD, Kind.BODY, Kind.LEAD)
         ]
         main.sort(key=lambda item: item[1].y0)
         for kind, line in main:
@@ -682,13 +772,14 @@ def _main_flow(classified: list[tuple[Kind, RawLine]]) -> list[Block]:
             if current_is_lead:
                 close_paragraph()
                 current_is_lead = False
-            if kind is Kind.HEADING:
+            if kind in (Kind.HEADING, Kind.SUBHEAD):
                 close_paragraph()
+                level = 2 if kind is Kind.HEADING else 3
                 heading_text = _plain_text(line)
-                if blocks and isinstance(blocks[-1], Heading) and blocks[-1].level == 2:
+                if blocks and isinstance(blocks[-1], Heading) and blocks[-1].level == level:
                     blocks[-1].text += _glue(blocks[-1].text, heading_text) + heading_text
                 else:
-                    blocks.append(Heading(heading_text))
+                    blocks.append(Heading(heading_text, level=level))
             else:
                 if current and _starts_paragraph(line, base_x[line.page], previous):
                     close_paragraph()
@@ -845,7 +936,9 @@ def plan_lines(raw_lines: Sequence[RawLine]) -> LinePlan:
         else:
             classified.append((kind, line))
 
+    classified = _drop_opener_byline(classified)
     classified = _demote_late_leads(classified)
+    classified = _promote_subheadings(classified)
     if any(kind in (Kind.BODY, Kind.LEAD) for kind, _ in classified):
         kept = {id(line): kind for kind, line in classified}
         decisions = [(line, kept.get(id(line), Kind.DROP)) for line in raw_lines]
@@ -1033,6 +1126,74 @@ def _demote_late_leads(
         flush()
         result.append((kind, line))
     flush()
+    return result
+
+
+_BYLINE_MAX_CHARS = 100
+_BYLINE_MAX_Y = 90.0  # the byline sits at the top of the first page
+
+
+def _drop_opener_byline(
+    classified: list[tuple[Kind, RawLine]],
+) -> list[tuple[Kind, RawLine]]:
+    """Drop the short author line of the chapter's first page.
+
+    The chapter header already shows the authors, so a short sidebar line on the
+    first page only repeats them.
+
+    >>> font = RawSpan("Guido Lassau", "EuclidCircularB-Regular", 8.5)
+    >>> byline = RawLine(1, 113.0, 62.0, (font,))
+    >>> _drop_opener_byline([(Kind.ASIDE_BODY, byline)])
+    []
+    >>> long = RawLine(1, 113.0, 62.0, (RawSpan("x" * 120, "EuclidCircularB-Regular", 8.5),))
+    >>> len(_drop_opener_byline([(Kind.ASIDE_BODY, long)]))
+    1
+    """
+    if not classified:
+        return classified
+    first_page = classified[0][1].page
+    opener = [
+        item
+        for item in classified
+        if item[0] is Kind.ASIDE_BODY and item[1].page == first_page and item[1].y0 < _BYLINE_MAX_Y
+    ]
+    if sum(len(line.text.strip()) for _, line in opener) >= _BYLINE_MAX_CHARS:
+        return classified
+    return [item for item in classified if item not in opener]
+
+
+def _promote_subheadings(
+    classified: list[tuple[Kind, RawLine]],
+) -> list[tuple[Kind, RawLine]]:
+    """Turn in-text subheadings, wrongly read as sidebar titles, into SUBHEAD.
+
+    A sidebar title is followed by sidebar text. An in-text subheading is
+    followed by body text in the same column.
+
+    >>> font = "EuclidCircularB-Semibold"
+    >>> head = RawLine(1, 114.0, 40.0, (RawSpan("Zünfte", font, 9.5),))
+    >>> span = RawSpan("Im Verlauf", "Practice-Regular", 10.4)
+    >>> text = RawLine(1, 113.0, 63.0, (span,))
+    >>> result = _promote_subheadings([(Kind.ASIDE_HEAD, head), (Kind.BODY, text)])
+    >>> [kind.value for kind, _ in result]
+    ['subhead', 'body']
+    >>> _promote_subheadings([(Kind.ASIDE_HEAD, head)])[0][0].value
+    'aside_head'
+    """
+    result: list[tuple[Kind, RawLine]] = []
+    for kind, line in classified:
+        if kind is Kind.ASIDE_HEAD:
+            below = [
+                (other_kind, other)
+                for other_kind, other in classified
+                if other.page == line.page
+                and other.y0 > line.y0
+                and abs(other.x0 - line.x0) < _COLUMN_TOLERANCE
+                and other_kind is not Kind.ASIDE_HEAD
+            ]
+            if below and min(below, key=lambda item: item[1].y0)[0] is Kind.BODY:
+                kind = Kind.SUBHEAD
+        result.append((kind, line))
     return result
 
 

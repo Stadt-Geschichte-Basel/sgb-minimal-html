@@ -15,6 +15,9 @@ from sgb_html.extract import (
     RawLine,
     RawSpan,
     TextRun,
+    _append_line,
+    _glue,
+    _line_inlines,
     _prune_orphan_notes,
     classify,
     extract_chapter,
@@ -475,12 +478,13 @@ class TestStructure:
                     y0=100,
                 ),
                 line(span("Neue Box", "EuclidCircularB-Semibold", 9.5), x0=113.0, y0=140),
+                line(span("Text der Box.", "EuclidCircularB-Regular", 8.5), x0=113.0, y0=160),
             ]
         )
         chapter = extract_chapter([page])
         _body_block, aside = chapter.blocks
         assert isinstance(aside, Aside)
-        prose, heading = aside.blocks
+        prose, heading, _box_text = aside.blocks
         assert paragraph_text(prose) == "Differenz von zwanzig Minuten. Danach weiter."
         assert heading == Heading("Neue Box", level=3)
 
@@ -1071,3 +1075,70 @@ class TestAuthors:
     def test_single_and_no_names(self) -> None:
         assert order_authors(["Anna Bauer"], "Anna Bauer") == ("Anna Bauer",)
         assert order_authors([], "Irgendwas") == ()
+
+
+class TestSmallPrintJoins:
+    def test_blank_span_keeps_the_word_gap(self) -> None:
+        text = RawLine(
+            1,
+            55.0,
+            100.0,
+            (
+                RawSpan("wirtschaftete", "Practice-Regular", 10.4),
+                RawSpan(".", "Practice-Regular", 10.4),
+                RawSpan(" ", "EuclidCircularB-Semibold", 7.0),
+                RawSpan("Frauen", "Practice-Regular", 10.4),
+            ),
+        )
+        runs = _line_inlines(text)
+        assert [r.text for r in runs if isinstance(r, TextRun)] == ["wirtschaftete. Frauen"]
+
+    def test_small_print_drops_break_hyphen(self) -> None:
+        inlines: list = []
+        first = RawLine(1, 29.0, 81.0, (RawSpan("wird um ge-", "EuclidCircularB-Regular", 8.5),))
+        second = RawLine(1, 29.0, 94.0, (RawSpan("gründet.", "EuclidCircularB-Regular", 8.5),))
+        _append_line(inlines, first, small=True)
+        _append_line(inlines, second, small=True)
+        assert inlines == [TextRun("wird um gegründet.", False)]
+
+    def test_wrapped_url_joins_without_space(self) -> None:
+        assert _glue("siehe https://www.srf.ch/play/", "tv/video") == ""
+
+
+class TestSidebarTitles:
+    def test_semibold_title_stays_apart_and_author_line_is_text(self) -> None:
+        page = FakePage(
+            [
+                body("Haupttext.", y0=50),
+                line(span("Titel der Box", "EuclidCircularB-Semibold", 8.5), x0=85.0, y0=100),
+                line(span("Erster Satz der Box.", "EuclidCircularB-Regular", 8.5), x0=85.0, y0=115),
+                line(span("Max Muster", "EuclidCircularB-Semibold", 8.5), x0=85.0, y0=130),
+            ]
+        )
+        _body_block, aside = extract_chapter([page]).blocks
+        assert isinstance(aside, Aside)
+        title, text, author = aside.blocks
+        assert title == Heading("Titel der Box", level=3)
+        assert paragraph_text(text) == "Erster Satz der Box."
+        assert paragraph_text(author) == "Max Muster"
+
+
+class TestOpenerByline:
+    def test_first_page_byline_is_dropped(self) -> None:
+        page = FakePage(
+            [
+                line(span("Max Muster", "EuclidCircularB-Regular", 8.5), x0=113.0, y0=60),
+                body("Haupttext.", y0=200),
+            ]
+        )
+        chapter = extract_chapter([page])
+        assert all(not isinstance(block, Aside) for block in chapter.blocks)
+
+
+class TestDoiLines:
+    def test_running_foot_doi_is_dropped_but_entry_doi_is_kept(self) -> None:
+        font = "EuclidCircularB-Regular"
+        foot = raw("https://doi.org/10.21255/sgb-09.05-877006", font, 6.5)
+        entry = raw("1955, S. 169–187, https://doi.org/10.5169/seals-783195.", font, 6.5)
+        assert classify(foot) is Kind.DROP
+        assert classify(entry) is Kind.NOTE
