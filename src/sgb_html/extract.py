@@ -490,7 +490,7 @@ def _finish(inlines: list[Inline]) -> list[Inline]:
 _LEAD_SHORT_LINE = 5.0  # font sizes; a lead line this short before a break ends a paragraph
 
 
-def _ends_lead_paragraph(line: RawLine, widest: float) -> bool:
+def _ends_lead_paragraph(line: RawLine, widest: float, short: float = _LEAD_SHORT_LINE) -> bool:
     """True when a lead line ends a sentence and stops far short of the right edge.
 
     Lead paragraphs have no first-line indent and no extra spacing. A short last
@@ -507,7 +507,7 @@ def _ends_lead_paragraph(line: RawLine, widest: float) -> bool:
     stripped = text.rstrip()
     if not stripped or stripped[-1] not in ".!?»›":
         return False
-    return widest - line.x1 > _LEAD_SHORT_LINE * dominant_span(line).size
+    return widest - line.x1 > short * dominant_span(line).size
 
 
 def _starts_paragraph(line: RawLine, base: float, previous: RawLine | None) -> bool:
@@ -518,6 +518,8 @@ def _starts_paragraph(line: RawLine, base: float, previous: RawLine | None) -> b
         deltas.append(line.x0 - previous.x0)
     return any(_PARAGRAPH_INDENT < delta <= _MAX_PARAGRAPH_INDENT for delta in deltas)
 
+
+_SIDEBAR_SHORT_LINE = 2.5  # font sizes; sidebar text has no indents, only a short last line
 
 _PARAGRAPH_GAP = 20.0  # points; sidebar lines are about 13.5 pt apart, a gap is wider
 
@@ -538,6 +540,41 @@ def _has_gap_above(line: RawLine, previous: RawLine | None) -> bool:
     return abs(line.x0 - previous.x0) < _COLUMN_TOLERANCE and line.y0 - previous.y0 > _PARAGRAPH_GAP
 
 
+def _ends_sidebar_paragraph(line: RawLine, widest: float) -> bool:
+    """True when a short sidebar line ends a sentence, not an abbreviation or quotation.
+
+    >>> text = lambda s: (RawSpan(s, "EuclidCircularB-Regular", 8.5),)
+    >>> _ends_sidebar_paragraph(RawLine(1, 85.0, 0.0, text("zu beheben."), x1=254.0), 281.0)
+    True
+    >>> _ends_sidebar_paragraph(RawLine(1, 85.0, 0.0, text("Pfennige (ca."), x1=254.0), 281.0)
+    False
+    >>> _ends_sidebar_paragraph(RawLine(1, 85.0, 0.0, text("Theodoricus (reg."), x1=254.0), 281.0)
+    False
+    >>> _ends_sidebar_paragraph(RawLine(1, 85.0, 0.0, text("«Propaganda»"), x1=254.0), 281.0)
+    False
+    """
+    words = "".join(s.text for s in line.spans if not _is_marker_span(s)).split()
+    if not words or words[-1][-1] == "»" or len(words[-1].lstrip("(«‹")) <= 4:
+        return False
+    return _ends_lead_paragraph(line, widest, _SIDEBAR_SHORT_LINE)
+
+
+def _column_widest(lines: Sequence[RawLine], line: RawLine) -> float:
+    """Right edge of the widest line in the same page column as ``line``.
+
+    >>> text = RawSpan("x", "EuclidCircularB-Regular", 8.5)
+    >>> a = RawLine(1, 85.0, 0.0, (text,), x1=280.0)
+    >>> b = RawLine(1, 288.0, 0.0, (text,), x1=480.0)
+    >>> _column_widest([a, b], a)
+    280.0
+    """
+    return max(
+        other.x1
+        for other in lines
+        if other.page == line.page and abs(other.x0 - line.x0) < _COLUMN_TOLERANCE
+    )
+
+
 def _build_paragraphs(
     lines: Sequence[RawLine], *, lead: bool = False, small: bool = False
 ) -> list[Paragraph]:
@@ -554,6 +591,11 @@ def _build_paragraphs(
         if current and (
             _starts_paragraph(line, base_x[line.page], previous)
             or (small and _has_gap_above(line, previous))
+            or (
+                small
+                and previous is not None
+                and _ends_sidebar_paragraph(previous, _column_widest(lines, previous))
+            )
             or (
                 lead
                 and previous is not None
