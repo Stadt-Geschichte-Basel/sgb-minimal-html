@@ -519,6 +519,25 @@ def _starts_paragraph(line: RawLine, base: float, previous: RawLine | None) -> b
     return any(_PARAGRAPH_INDENT < delta <= _MAX_PARAGRAPH_INDENT for delta in deltas)
 
 
+_PARAGRAPH_GAP = 20.0  # points; sidebar lines are about 13.5 pt apart, a gap is wider
+
+
+def _has_gap_above(line: RawLine, previous: RawLine | None) -> bool:
+    """True when extra vertical space separates a line from the previous one in its column.
+
+    >>> text = RawSpan("x", "EuclidCircularB-Regular", 8.5)
+    >>> _has_gap_above(RawLine(1, 29.0, 140.0, (text,)), RawLine(1, 29.0, 108.0, (text,)))
+    True
+    >>> _has_gap_above(RawLine(1, 29.0, 122.0, (text,)), RawLine(1, 29.0, 108.0, (text,)))
+    False
+    >>> _has_gap_above(RawLine(1, 29.0, 122.0, (text,)), None)
+    False
+    """
+    if previous is None or previous.page != line.page:
+        return False
+    return abs(line.x0 - previous.x0) < _COLUMN_TOLERANCE and line.y0 - previous.y0 > _PARAGRAPH_GAP
+
+
 def _build_paragraphs(
     lines: Sequence[RawLine], *, lead: bool = False, small: bool = False
 ) -> list[Paragraph]:
@@ -534,6 +553,7 @@ def _build_paragraphs(
     for line in lines:
         if current and (
             _starts_paragraph(line, base_x[line.page], previous)
+            or (small and _has_gap_above(line, previous))
             or (
                 lead
                 and previous is not None
