@@ -284,6 +284,8 @@ def _is_wrapped_url(previous: str, upcoming: str) -> bool:
     False
     >>> _is_wrapped_url("https://www.srf.ch.", "Danach")
     False
+    >>> _is_wrapped_url("https://doi.org/10.1016/S0277-3791(03)", "00083-0")
+    True
     >>> _is_wrapped_url("", "x")
     False
     """
@@ -291,7 +293,11 @@ def _is_wrapped_url(previous: str, upcoming: str) -> bool:
     if not words or not upcoming:
         return False
     tail = words[-1]
-    if not _URL_START_RE.match(tail) or tail[-1] not in _URL_BREAK_CHARS:
+    if not _URL_START_RE.match(tail):
+        return False
+    if tail.endswith(")") and upcoming[0].isdigit():
+        return True  # a DOI such as ...3791(03) 00083-0
+    if tail[-1] not in _URL_BREAK_CHARS:
         return False
     return not (tail.endswith(".") and upcoming[0].isupper())
 
