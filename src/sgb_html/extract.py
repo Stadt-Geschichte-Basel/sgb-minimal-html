@@ -268,6 +268,31 @@ def _clean(text: str) -> str:
     return cleaned + SOFT_HYPHEN if keep_trailing else cleaned
 
 
+_URL_START_RE = re.compile(r"(?:https?://|www\.)")
+_URL_BREAK_CHARS = "/_=&?:-."
+
+
+def _is_wrapped_url(previous: str, upcoming: str) -> bool:
+    """True when a URL breaks at a line end and continues on the next line.
+
+    >>> _is_wrapped_url("siehe https://www.srf.ch/play/", "tv/video")
+    True
+    >>> _is_wrapped_url("https://www.srf.ch/play/tv", "abgerufen")
+    False
+    >>> _is_wrapped_url("https://www.srf.ch.", "Danach")
+    False
+    >>> _is_wrapped_url("", "x")
+    False
+    """
+    words = previous.split()
+    if not words or not upcoming:
+        return False
+    tail = words[-1]
+    if not _URL_START_RE.match(tail) or tail[-1] not in _URL_BREAK_CHARS:
+        return False
+    return not (tail.endswith(".") and upcoming[0].isupper())
+
+
 def _glue(previous: str, upcoming: str = "") -> str:
     """Separator when continuing a paragraph on the next PDF line.
 
@@ -282,6 +307,8 @@ def _glue(previous: str, upcoming: str = "") -> str:
     if previous.endswith((SOFT_HYPHEN, "-")):
         return ""
     if previous.endswith("–") and upcoming[:1].isdigit():
+        return ""
+    if _is_wrapped_url(previous, upcoming):
         return ""
     return " "
 
@@ -299,6 +326,9 @@ def _line_inlines(line: RawLine, *, drop_anchors: bool = True) -> list[Inline]:
     for span in line.spans:
         text = span.text.replace("\t", " ")
         if not text.strip():
+            # A blank span (often inside a dropped figure anchor) still separates words.
+            if inlines and isinstance(inlines[-1], TextRun) and not inlines[-1].text.endswith(" "):
+                inlines[-1] = TextRun(inlines[-1].text + " ", inlines[-1].italic)
             continue
         digits = text.strip()
         if _is_marker_span(span):
@@ -341,7 +371,40 @@ def _trim_line(inlines: list[Inline]) -> list[Inline]:
     return trimmed
 
 
-def _append_line(inlines: list[Inline], line: RawLine, *, drop_anchors: bool = True) -> None:
+_KEEP_HYPHEN_BEFORE = {"und", "oder", "bis", "sowie", "resp.", "bzw."}
+
+
+def _drop_break_hyphen(previous: str, upcoming: str) -> str:
+    """Remove a hyphen that only marks a line break in small print.
+
+    Sidebars and notes print the break hyphen as a plain hyphen. A hyphen after
+    a lower-case letter before a lower-case word is a break, except in a
+    suspended compound such as "Kalt- und Warmzeiten".
+
+    >>> _drop_break_hyphen("um 640 ge-", "gründet"), _drop_break_hyphen("Fami" + SOFT_HYPHEN + "-", "lie")
+    ('um 640 ge', 'Fami\xad')
+    >>> _drop_break_hyphen("Moutier-", "Grandval"), _drop_break_hyphen("Kalt-", "und Warm")
+    ('Moutier-', 'Kalt-')
+    >>> _drop_break_hyphen("Ende", "x")
+    'Ende'
+    """
+    if previous.endswith(SOFT_HYPHEN + "-"):
+        return previous[:-1]
+    if (
+        len(previous) > 1
+        and previous.endswith("-")
+        and previous[-2].isalpha()
+        and previous[-2].islower()
+        and upcoming[:1].islower()
+        and upcoming.split()[0] not in _KEEP_HYPHEN_BEFORE
+    ):
+        return previous[:-1]
+    return previous
+
+
+def _append_line(
+    inlines: list[Inline], line: RawLine, *, drop_anchors: bool = True, small: bool = False
+) -> None:
     """Append a line's inlines, joining text across the line break.
 
     Soft hyphens are kept while accumulating (they decide the glue of the
@@ -355,6 +418,12 @@ def _append_line(inlines: list[Inline], line: RawLine, *, drop_anchors: bool = T
     if isinstance(previous, TextRun):
         upcoming = first.text if isinstance(first, TextRun) else ""
         glue = _glue(previous.text, upcoming)
+        if small:
+            kept = _drop_break_hyphen(previous.text, upcoming)
+            if kept != previous.text:
+                glue = ""
+                previous = TextRun(kept, previous.italic)
+                inlines[-1] = previous
         if isinstance(first, TextRun) and previous.italic == first.italic:
             inlines[-1] = TextRun(previous.text + glue + first.text, previous.italic)
             new_runs = new_runs[1:]
@@ -438,7 +507,9 @@ def _starts_paragraph(line: RawLine, base: float, previous: RawLine | None) -> b
     return any(_PARAGRAPH_INDENT < delta <= _MAX_PARAGRAPH_INDENT for delta in deltas)
 
 
-def _build_paragraphs(lines: Sequence[RawLine], *, lead: bool = False) -> list[Paragraph]:
+def _build_paragraphs(
+    lines: Sequence[RawLine], *, lead: bool = False, small: bool = False
+) -> list[Paragraph]:
     """Group consecutive lines into paragraphs using first-line indents."""
     paragraphs: list[Paragraph] = []
     base_x: dict[int, float] = {}
@@ -459,7 +530,7 @@ def _build_paragraphs(lines: Sequence[RawLine], *, lead: bool = False) -> list[P
         ):
             paragraphs.append(_paragraph(current, lead=lead))
             current = []
-        _append_line(current, line)
+        _append_line(current, line, small=small)
         previous = line
     if current:
         paragraphs.append(_paragraph(current, lead=lead))
@@ -513,7 +584,9 @@ def _build_notes(lines: Sequence[RawLine]) -> tuple[list[Note], list[str]]:
                 notes.append(Note(int(match.group(1)), _clean(match.group(2))))
             elif notes:
                 continuation = _plain_text(line)
-                joined = notes[-1].text + _glue(notes[-1].text, continuation) + continuation
+                kept = _drop_break_hyphen(notes[-1].text, continuation)
+                glue = "" if kept != notes[-1].text else _glue(kept, continuation)
+                joined = kept + glue + continuation
                 notes[-1] = Note(notes[-1].number, joined)
             else:
                 warnings.append(
@@ -529,7 +602,7 @@ def _build_aside(lines: list[tuple[Kind, RawLine]]) -> Aside:
     prose: list[RawLine] = []
     for kind, line in lines:
         if kind is Kind.ASIDE_HEAD:
-            aside_blocks.extend(_build_paragraphs(prose))
+            aside_blocks.extend(_build_paragraphs(prose, small=True))
             prose = []
             head = _plain_text(line)
             if aside_blocks and isinstance(aside_blocks[-1], Heading):
@@ -538,7 +611,7 @@ def _build_aside(lines: list[tuple[Kind, RawLine]]) -> Aside:
                 aside_blocks.append(Heading(head, level=3))
         else:
             prose.append(line)
-    aside_blocks.extend(_build_paragraphs(prose))
+    aside_blocks.extend(_build_paragraphs(prose, small=True))
     return Aside(aside_blocks)
 
 

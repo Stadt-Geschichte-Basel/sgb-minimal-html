@@ -15,6 +15,9 @@ from sgb_html.extract import (
     RawLine,
     RawSpan,
     TextRun,
+    _append_line,
+    _glue,
+    _line_inlines,
     _prune_orphan_notes,
     classify,
     extract_chapter,
@@ -1071,3 +1074,31 @@ class TestAuthors:
     def test_single_and_no_names(self) -> None:
         assert order_authors(["Anna Bauer"], "Anna Bauer") == ("Anna Bauer",)
         assert order_authors([], "Irgendwas") == ()
+
+
+class TestSmallPrintJoins:
+    def test_blank_span_keeps_the_word_gap(self) -> None:
+        text = RawLine(
+            1,
+            55.0,
+            100.0,
+            (
+                RawSpan("wirtschaftete", "Practice-Regular", 10.4),
+                RawSpan(".", "Practice-Regular", 10.4),
+                RawSpan(" ", "EuclidCircularB-Semibold", 7.0),
+                RawSpan("Frauen", "Practice-Regular", 10.4),
+            ),
+        )
+        runs = _line_inlines(text)
+        assert [r.text for r in runs if isinstance(r, TextRun)] == ["wirtschaftete. Frauen"]
+
+    def test_small_print_drops_break_hyphen(self) -> None:
+        inlines: list = []
+        first = RawLine(1, 29.0, 81.0, (RawSpan("wird um ge-", "EuclidCircularB-Regular", 8.5),))
+        second = RawLine(1, 29.0, 94.0, (RawSpan("gründet.", "EuclidCircularB-Regular", 8.5),))
+        _append_line(inlines, first, small=True)
+        _append_line(inlines, second, small=True)
+        assert inlines == [TextRun("wird um gegründet.", False)]
+
+    def test_wrapped_url_joins_without_space(self) -> None:
+        assert _glue("siehe https://www.srf.ch/play/", "tv/video") == ""
