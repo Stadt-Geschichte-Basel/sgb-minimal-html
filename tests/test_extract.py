@@ -478,12 +478,13 @@ class TestStructure:
                     y0=100,
                 ),
                 line(span("Neue Box", "EuclidCircularB-Semibold", 9.5), x0=113.0, y0=140),
+                line(span("Text der Box.", "EuclidCircularB-Regular", 8.5), x0=113.0, y0=160),
             ]
         )
         chapter = extract_chapter([page])
         _body_block, aside = chapter.blocks
         assert isinstance(aside, Aside)
-        prose, heading = aside.blocks
+        prose, heading, _box_text = aside.blocks
         assert paragraph_text(prose) == "Differenz von zwanzig Minuten. Danach weiter."
         assert heading == Heading("Neue Box", level=3)
 
@@ -1102,3 +1103,21 @@ class TestSmallPrintJoins:
 
     def test_wrapped_url_joins_without_space(self) -> None:
         assert _glue("siehe https://www.srf.ch/play/", "tv/video") == ""
+
+
+class TestSidebarTitles:
+    def test_semibold_title_stays_apart_and_author_line_is_text(self) -> None:
+        page = FakePage(
+            [
+                body("Haupttext.", y0=50),
+                line(span("Titel der Box", "EuclidCircularB-Semibold", 8.5), x0=85.0, y0=100),
+                line(span("Erster Satz der Box.", "EuclidCircularB-Regular", 8.5), x0=85.0, y0=115),
+                line(span("Max Muster", "EuclidCircularB-Semibold", 8.5), x0=85.0, y0=130),
+            ]
+        )
+        _body_block, aside = extract_chapter([page]).blocks
+        assert isinstance(aside, Aside)
+        title, text, author = aside.blocks
+        assert title == Heading("Titel der Box", level=3)
+        assert paragraph_text(text) == "Erster Satz der Box."
+        assert paragraph_text(author) == "Max Muster"

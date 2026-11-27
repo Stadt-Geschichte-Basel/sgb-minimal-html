@@ -236,6 +236,9 @@ def classify(line: RawLine) -> Kind:
             None,
         )
         if aside_span is not None:
+            # A whole line in Semibold is the sidebar title; Regular is sidebar text.
+            if heavy and 8.0 <= size < 8.8:
+                return Kind.ASIDE_HEAD
             return Kind.ASIDE_BODY
         if size >= 18:
             return Kind.TITLE
@@ -381,8 +384,10 @@ def _drop_break_hyphen(previous: str, upcoming: str) -> str:
     a lower-case letter before a lower-case word is a break, except in a
     suspended compound such as "Kalt- und Warmzeiten".
 
-    >>> _drop_break_hyphen("um 640 ge-", "gründet"), _drop_break_hyphen("Fami" + SOFT_HYPHEN + "-", "lie")
-    ('um 640 ge', 'Fami\xad')
+    >>> _drop_break_hyphen("um 640 ge-", "gründet")
+    'um 640 ge'
+    >>> _drop_break_hyphen("Fami" + SOFT_HYPHEN + "-", "lie")
+    'Fami\xad'
     >>> _drop_break_hyphen("Moutier-", "Grandval"), _drop_break_hyphen("Kalt-", "und Warm")
     ('Moutier-', 'Kalt-')
     >>> _drop_break_hyphen("Ende", "x")
@@ -612,6 +617,10 @@ def _build_aside(lines: list[tuple[Kind, RawLine]]) -> Aside:
         else:
             prose.append(line)
     aside_blocks.extend(_build_paragraphs(prose, small=True))
+    if len(aside_blocks) > 1 and isinstance(aside_blocks[-1], Heading):
+        # A title with no text after it is the author line at the end of the sidebar.
+        last = aside_blocks.pop()
+        aside_blocks.append(Paragraph([TextRun(last.text, False)]))
     return Aside(aside_blocks)
 
 
