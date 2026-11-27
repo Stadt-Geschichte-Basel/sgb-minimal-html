@@ -941,6 +941,33 @@ def _column_runs(lines: Sequence[RawLine]) -> Iterator[list[RawLine]]:
             yield sorted(column, key=lambda li: li.y0)
 
 
+_HEADING_WRAP = 2.0  # font sizes; a wrapped heading line sits closer than this
+
+
+def _continues_unindented(line: RawLine, previous: RawLine | None, widest: float) -> bool:
+    """True when an unindented entry line continues the paragraph above it.
+
+    Author biographies have no hanging indent. A paragraph ends at a short line
+    or at a vertical gap.
+
+    >>> text = RawSpan("x", "EuclidCircularB-Regular", 6.5)
+    >>> full = RawLine(1, 43.0, 81.0, (text,), x1=334.0)
+    >>> _continues_unindented(RawLine(1, 43.0, 90.0, (text,), x1=334.0), full, 334.0)
+    True
+    >>> _continues_unindented(RawLine(1, 43.0, 108.0, (text,), x1=334.0), full, 334.0)
+    False
+    >>> short = RawLine(1, 43.0, 99.0, (text,), x1=124.0)
+    >>> _continues_unindented(RawLine(1, 43.0, 108.0, (text,), x1=334.0), short, 334.0)
+    False
+    >>> _continues_unindented(full, None, 334.0)
+    False
+    """
+    if previous is None or previous.page != line.page:
+        return False
+    size = dominant_span(line).size
+    return line.y0 - previous.y0 <= 1.6 * size * 1.4 and widest - previous.x1 < 2.5 * size
+
+
 def _appendix_flow(classified: list[tuple[Kind, RawLine]]) -> list[Block]:
     """Assemble an appendix: sections, intro prose, and list entries.
 
@@ -960,8 +987,13 @@ def _appendix_flow(classified: list[tuple[Kind, RawLine]]) -> list[Block]:
             current = []
 
     previous: RawLine | None = None
+    heading_line: RawLine | None = None
+    in_bios = False  # the author biographies have no hanging indents
     for column in _column_runs([line for _, line in kept]):
-        entry_base = min((li.x0 for li in column if by_id[id(li)] is Kind.ENTRY), default=0.0)
+        entries = [li for li in column if by_id[id(li)] is Kind.ENTRY]
+        entry_base = min((li.x0 for li in entries), default=0.0)
+        hanging = any(li.x0 > entry_base + _PARAGRAPH_INDENT for li in entries)
+        widest = max((li.x1 for li in entries), default=0.0)
         for line in column:
             kind = by_id[id(line)]
             if kind is Kind.ASIDE_HEAD and current and line.x0 > entry_base + _PARAGRAPH_INDENT:
@@ -972,10 +1004,23 @@ def _appendix_flow(classified: list[tuple[Kind, RawLine]]) -> list[Block]:
                 close()
                 level = 2 if kind is Kind.HEADING else 3
                 text = _plain_text(line)
-                if blocks and isinstance(blocks[-1], Heading) and blocks[-1].level == level:
+                wrapped = (
+                    heading_line is not None
+                    and heading_line.page == line.page
+                    and 0 < line.y0 - heading_line.y0 <= _HEADING_WRAP * dominant_span(line).size
+                )
+                if (
+                    wrapped
+                    and blocks
+                    and isinstance(blocks[-1], Heading)
+                    and blocks[-1].level == level
+                ):
                     blocks[-1].text += _glue(blocks[-1].text, text) + text
                 else:
                     blocks.append(Heading(text, level=level))
+                heading_line = line
+                if level == 2:
+                    in_bios = text.startswith("Autor")
             elif kind is Kind.BODY:
                 leading = 2.8 * dominant_span(line).size
                 same_column = previous is not None and by_id.get(id(previous)) is Kind.BODY
@@ -983,9 +1028,14 @@ def _appendix_flow(classified: list[tuple[Kind, RawLine]]) -> list[Block]:
                     close()
                 _append_line(current, line, drop_anchors=False)
             else:
-                if current and line.x0 <= entry_base + _PARAGRAPH_INDENT:
+                continues = in_bios and not hanging and not _NOTE_START_RE.match(line.text)
+                if (
+                    current
+                    and line.x0 <= entry_base + _PARAGRAPH_INDENT
+                    and not (continues and _continues_unindented(line, previous, widest))
+                ):
                     close()
-                _append_line(current, line, drop_anchors=False)
+                _append_line(current, line, drop_anchors=False, small=in_bios)
             previous = line
     close()
     for block in blocks:
