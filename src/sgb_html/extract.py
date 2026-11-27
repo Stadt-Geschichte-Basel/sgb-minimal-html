@@ -46,6 +46,7 @@ class Kind(Enum):
     BODY = "body"
     ASIDE_HEAD = "aside_head"
     SUBHEAD = "subhead"
+    BYLINE = "byline"
     ASIDE_BODY = "aside_body"
     NOTE = "note"
     ENTRY = "entry"
@@ -753,7 +754,8 @@ def _main_flow(classified: list[tuple[Kind, RawLine]]) -> list[Block]:
         main = [
             (kind, line)
             for kind, line in classified
-            if line.page == page and kind in (Kind.HEADING, Kind.SUBHEAD, Kind.BODY, Kind.LEAD)
+            if line.page == page
+            and kind in (Kind.HEADING, Kind.SUBHEAD, Kind.BYLINE, Kind.BODY, Kind.LEAD)
         ]
         main.sort(key=lambda item: item[1].y0)
         for kind, line in main:
@@ -772,6 +774,10 @@ def _main_flow(classified: list[tuple[Kind, RawLine]]) -> list[Block]:
             if current_is_lead:
                 close_paragraph()
                 current_is_lead = False
+            if kind is Kind.BYLINE:
+                close_paragraph()
+                blocks.append(Paragraph(_finish(_line_inlines(line))))
+                continue
             if kind in (Kind.HEADING, Kind.SUBHEAD):
                 close_paragraph()
                 level = 2 if kind is Kind.HEADING else 3
@@ -939,6 +945,7 @@ def plan_lines(raw_lines: Sequence[RawLine]) -> LinePlan:
     classified = _drop_opener_byline(classified)
     classified = _demote_late_leads(classified)
     classified = _promote_subheadings(classified)
+    classified = _promote_bylines(classified)
     if any(kind in (Kind.BODY, Kind.LEAD) for kind, _ in classified):
         kept = {id(line): kind for kind, line in classified}
         decisions = [(line, kept.get(id(line), Kind.DROP)) for line in raw_lines]
@@ -1193,6 +1200,47 @@ def _promote_subheadings(
             ]
             if below and min(below, key=lambda item: item[1].y0)[0] is Kind.BODY:
                 kind = Kind.SUBHEAD
+        result.append((kind, line))
+    return result
+
+
+_BYLINE_MAX_LINE = 70  # characters; a byline is a name, not a sentence
+
+
+def _promote_bylines(
+    classified: list[tuple[Kind, RawLine]],
+) -> list[tuple[Kind, RawLine]]:
+    """Turn a short sidebar-sized line between a section heading and body text into BYLINE.
+
+    >>> font = "EuclidCircularB-Semibold"
+    >>> head = RawLine(1, 56.0, 36.0, (RawSpan("Titel", font, 14.0),))
+    >>> name = RawLine(1, 57.0, 90.0, (RawSpan("Max Muster", "EuclidCircularB-Regular", 8.5),))
+    >>> text = RawLine(1, 56.0, 120.0, (RawSpan("Im Jahr", "Practice-Regular", 10.4),))
+    >>> items = [(Kind.HEADING, head), (Kind.ASIDE_BODY, name), (Kind.BODY, text)]
+    >>> [kind.value for kind, _ in _promote_bylines(items)]
+    ['heading', 'byline', 'body']
+    """
+    main = (Kind.HEADING, Kind.SUBHEAD, Kind.BODY, Kind.LEAD)
+    result: list[tuple[Kind, RawLine]] = []
+    for kind, line in classified:
+        text = line.text.strip()
+        if kind is Kind.ASIDE_BODY and len(text) <= _BYLINE_MAX_LINE and not text.endswith("."):
+            column = [
+                (other_kind, other)
+                for other_kind, other in classified
+                if other_kind in main
+                and other.page == line.page
+                and abs(other.x0 - line.x0) < _COLUMN_TOLERANCE
+            ]
+            above = [item for item in column if item[1].y0 < line.y0]
+            below = [item for item in column if item[1].y0 > line.y0]
+            if (
+                above
+                and below
+                and max(above, key=lambda item: item[1].y0)[0] is Kind.HEADING
+                and min(below, key=lambda item: item[1].y0)[0] is Kind.BODY
+            ):
+                kind = Kind.BYLINE
         result.append((kind, line))
     return result
 
