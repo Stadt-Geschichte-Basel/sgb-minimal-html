@@ -1133,3 +1133,12 @@ class TestOpenerByline:
         )
         chapter = extract_chapter([page])
         assert all(not isinstance(block, Aside) for block in chapter.blocks)
+
+
+class TestDoiLines:
+    def test_running_foot_doi_is_dropped_but_entry_doi_is_kept(self) -> None:
+        font = "EuclidCircularB-Regular"
+        foot = raw("https://doi.org/10.21255/sgb-09.05-877006", font, 6.5)
+        entry = raw("1955, S. 169–187, https://doi.org/10.5169/seals-783195.", font, 6.5)
+        assert classify(foot) is Kind.DROP
+        assert classify(entry) is Kind.NOTE

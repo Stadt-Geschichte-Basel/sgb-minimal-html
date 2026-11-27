@@ -29,7 +29,7 @@ from typing import Protocol
 
 SOFT_HYPHEN = "­"
 
-_DOI_RE = re.compile(r"https?://doi\.org/")
+_DOI_RE = re.compile(r"^\s*https?://doi\.org/10\.21255/sgb-\S*\s*$")  # the chapter's running foot
 _NOTE_START_RE = re.compile(r"^\s*(\d+) ?\t\s*(.*)$")
 _COLUMN_GAP = 50.0
 _PARAGRAPH_INDENT = 4.0
