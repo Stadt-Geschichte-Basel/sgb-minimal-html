@@ -29,6 +29,8 @@ Lines in fonts foreign to the series (e.g. Helvetica) are OCR layers inside repr
 - **Paragraphs across pages** — paragraphs are detected by first-line indents (~25–30 pt) and continue across page breaks and around floated boxes (larger x-shifts of ~60 pt are text flowing around pull quotes or images, not new paragraphs).
 - **Endnotes** — the `Anmerkungen` section is set in two or three columns; lines are re-ordered column by column, note starts are recognized by their bold number spans, and markers are matched to notes by number (sidebar notes continue the chapter numbering; duplicate numbers are disambiguated by occurrence order).
 - **Footnote markers vs. superscripts** — only *bold* superscript digits are markers; regular superscripts such as the isotope notation ¹⁴C stay plain text.
+- **Sidebar paragraphs** — sidebar text has no indents, so a short line that ends a sentence ends the paragraph; abbreviations and closing quotation marks do not count.
+- **Tables, maps, and charts** — tables are not part of the edition. Text from maps and charts (labels with digits, capitals, or repeated words) is dropped.
 - **Figure anchors** — inline references like `[7 | 8]` point to images that are not part of the edition and are removed together with the figures, captions, and pull quotes.
 
 ## Appendix chapters

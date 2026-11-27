@@ -782,6 +782,33 @@ def _merge_continuation_asides(blocks: list[Block]) -> list[Block]:
     return merged
 
 
+_LABEL_MAX_CHARS = 40
+
+
+def _is_label_aside(aside: Aside) -> bool:
+    """True for map and chart labels: a few words, no sentence punctuation, and digits,
+    capitals or repeated words. A person's name (a sidebar byline) stays.
+
+    >>> _is_label_aside(Aside([Paragraph([TextRun("MAXIMA SEQUANORUM", False)])]))
+    True
+    >>> _is_label_aside(Aside([Paragraph([TextRun("Ein Satz, kurz.", False)])]))
+    False
+    >>> _is_label_aside(Aside([Paragraph([TextRun("Reto Marti", False)])]))
+    False
+    >>> _is_label_aside(Aside([Heading("1960 1970", level=3)]))
+    True
+    >>> _is_label_aside(Aside([Paragraph([TextRun("Basel Basel", False)])]))
+    True
+    """
+    text = " ".join(
+        _paragraph_text(b) if isinstance(b, Paragraph) else b.text for b in aside.blocks
+    )
+    if len(text) > _LABEL_MAX_CHARS or re.search(r"[.!?,;:]", text):
+        return False
+    words = text.split()
+    return any(ch.isdigit() for ch in text) or text.isupper() or len(set(words)) < len(words)
+
+
 def _main_flow(classified: list[tuple[Kind, RawLine]]) -> list[Block]:
     """Assemble headings, body paragraphs, and asides in reading order.
 
@@ -860,7 +887,9 @@ def _main_flow(classified: list[tuple[Kind, RawLine]]) -> list[Block]:
             if line.page == page and kind in (Kind.ASIDE_HEAD, Kind.ASIDE_BODY)
         ]
         if aside_lines:
-            pending_asides.append(_build_aside(aside_lines))
+            aside = _build_aside(aside_lines)
+            if not _is_label_aside(aside):
+                pending_asides.append(aside)
         if not current:
             blocks.extend(pending_asides)
             pending_asides.clear()
