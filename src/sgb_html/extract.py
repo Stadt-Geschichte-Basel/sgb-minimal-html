@@ -1196,14 +1196,70 @@ def _printed_order(names: Sequence[str], source: str) -> tuple[str, ...] | None:
     return best
 
 
-def order_authors(names: Sequence[str], *sources: str) -> tuple[str, ...]:
+def _tidy_contents(text: str) -> str:
+    return " ".join(text.replace(SOFT_HYPHEN, "").replace("\xa0", " ").replace("|", " ").split())
+
+
+_TITLE_KEY = 25  # characters of a chapter title that find it in the contents
+
+
+def contents_span(front_matter: str, titles: Sequence[str], index: int) -> str:
+    """Return the part of the printed contents that belongs to one chapter.
+
+    The contents list every article with its authors in brackets. The part of
+    a chapter runs from its title to the title of the next chapter found. The
+    result is empty when the contents or the chapter title are missing.
+
+    >>> toc = "Inhalt | 8 Vorwort | 12 Eins | (Anna Bauer) | 20 Zwei | (Zoe Zahn) | 30 Anhang"
+    >>> contents_span(toc, ["Vorwort", "Eins", "Zwei", "Anhang"], 2)
+    'Zwei (Zoe Zahn) 30'
+    >>> contents_span("kein Inhalt", ["Eins"], 0)
+    ''
+    """
+    text = _tidy_contents(front_matter)
+    start = text.find("Inhalt ")
+    if start < 0:
+        return ""
+    # The contents list the foreword first. Its page, which repeats the word, ends them.
+    foreword = text.find("Geleitwort", start)
+    end = text.find("Geleitwort", foreword + 1) if foreword >= 0 else -1
+    text = text[start : end if end > start else len(text)]
+    positions: list[int] = []
+    cursor = 0
+    for title in titles:
+        key = _tidy_contents(title)[:_TITLE_KEY]
+        found = text.find(key, cursor) if key else -1
+        positions.append(found)
+        if found >= 0:
+            cursor = found + 1
+    here = positions[index]
+    if here < 0:
+        return ""
+    following = [position for position in positions[index + 1 :] if position > here]
+    return text[here : following[0] if following else len(text)].strip()
+
+
+def _contents_order(names: Sequence[str], span: str) -> tuple[str, ...] | None:
+    """Order ``names`` by their first appearance in the contents of a chapter."""
+    first: dict[str, int] = {}
+    for name in names:
+        match = re.search(re.escape(name), span) or re.search(re.escape(name.split()[-1]), span)
+        if match is None:
+            return None
+        first[name] = match.start()
+    return tuple(sorted(names, key=lambda name: (first[name], name)))
+
+
+def order_authors(names: Sequence[str], *sources: str, contents: str = "") -> tuple[str, ...]:
     """Order authors as printed in the book.
 
     Each source is printed text, for example the chapter's author line or the
     volume front matter. A ``|`` marks a line break. The first source that
-    names every author close together on one line sets the order. Without
-    such a source the order is alphabetical by family name, so the result
-    never depends on the API response order.
+    names every author close together on one line sets the order. The
+    ``contents`` text of the chapter (see :func:`contents_span`) comes next:
+    the authors are ordered by their first article in the printed contents.
+    Without any such source the order is alphabetical by family name, so the
+    result never depends on the API response order.
 
     >>> order_authors(["Anina Zahn", "Silas Gusset"], "Silas Gusset, Anina Zahn")
     ('Silas Gusset', 'Anina Zahn')
@@ -1213,12 +1269,17 @@ def order_authors(names: Sequence[str], *sources: str) -> tuple[str, ...]:
     ('Silas Gusset', 'Anina Zahn')
     >>> order_authors(["Zoe Zahn", "Anna Bauer"], "Einleitung")
     ('Anna Bauer', 'Zoe Zahn')
+    >>> order_authors(["Anna Bauer", "Zoe Zahn"], contents="Eins (Zoe Zahn) 5 Zwei (Anna Bauer)")
+    ('Zoe Zahn', 'Anna Bauer')
     """
     if len(names) > 1:
         for source in sources:
             ordered = _printed_order(names, source)
             if ordered is not None:
                 return ordered
+        by_contents = _contents_order(names, contents)
+        if by_contents is not None:
+            return by_contents
     return tuple(sorted(names, key=lambda name: (name.split()[-1].casefold(), name)))
 
 

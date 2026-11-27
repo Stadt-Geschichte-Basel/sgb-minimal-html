@@ -20,6 +20,7 @@ from sgb_html.extract import (
     _line_inlines,
     _prune_orphan_notes,
     classify,
+    contents_span,
     extract_chapter,
     iter_raw_lines,
     order_authors,
@@ -1075,6 +1076,71 @@ class TestAuthors:
     def test_single_and_no_names(self) -> None:
         assert order_authors(["Anna Bauer"], "Anna Bauer") == ("Anna Bauer",)
         assert order_authors([], "Irgendwas") == ()
+
+    def test_contents_order_follows_first_article(self) -> None:
+        names = ["Anna Bauer", "Zoe Zahn"]
+        contents = "Eins (Zoe Zahn) 5 Zwei (Anna Bauer, Zoe Zahn)"
+        assert order_authors(names, "Einleitung", contents=contents) == ("Zoe Zahn", "Anna Bauer")
+
+    def test_printed_line_beats_contents(self) -> None:
+        names = ["Anna Bauer", "Zoe Zahn"]
+        assert order_authors(names, "Anna Bauer, Zoe Zahn", contents="(Zoe Zahn) (Anna Bauer)") == (
+            "Anna Bauer",
+            "Zoe Zahn",
+        )
+
+    def test_contents_matches_family_name_when_full_name_differs(self) -> None:
+        names = ["Zoe Maria Zahn", "Anna Bauer"]
+        assert order_authors(names, contents="Eins (Zoe Zahn) Zwei (Anna Bauer)") == (
+            "Zoe Maria Zahn",
+            "Anna Bauer",
+        )
+
+    def test_contents_without_every_author_falls_back_to_alphabetical(self) -> None:
+        names = ["Zoe Zahn", "Anna Bauer"]
+        assert order_authors(names, contents="Eins (Zoe Zahn)") == ("Anna Bauer", "Zoe Zahn")
+
+    def test_contents_tie_is_alphabetical(self) -> None:
+        names = ["Zoe Meier", "Anna Meier"]
+        assert order_authors(names, contents="Eins (Meier)") == ("Anna Meier", "Zoe Meier")
+
+
+class TestContentsSpan:
+    TOC = (
+        f"Stadt | Inhalt | 8 Geleitwort | 12 Eins | 14 Auf{SOFT_HYPHEN}satz | (Anna\xa0Bauer) | "
+        "20 Zwei | (Zoe Zahn) | 30 Anhang | 8 Geleitwort | Eins Zwei (Max Roth)"
+    )
+    TITLES = ("Geleitwort", "Eins", "Zwei", "Anhang")
+
+    def test_span_runs_to_the_next_title(self) -> None:
+        assert contents_span(self.TOC, self.TITLES, 1) == "Eins 14 Aufsatz (Anna Bauer) 20"
+
+    def test_last_title_ends_at_the_end_of_the_contents(self) -> None:
+        assert contents_span(self.TOC, self.TITLES, 3) == "Anhang 8"
+
+    def test_text_after_the_contents_is_ignored(self) -> None:
+        assert contents_span(self.TOC, self.TITLES, 2) == "Zwei (Zoe Zahn) 30"
+
+    def test_contents_without_end_marker_run_to_the_end(self) -> None:
+        assert contents_span("Inhalt | Eins | (Anna Bauer)", ["Eins"], 0) == "Eins (Anna Bauer)"
+        assert contents_span("Inhalt | 8 Geleitwort | Eins (Anna Bauer)", ["Eins"], 0) == (
+            "Eins (Anna Bauer)"
+        )
+
+    def test_no_contents(self) -> None:
+        assert contents_span("Nur Text", self.TITLES, 1) == ""
+
+    def test_missing_title(self) -> None:
+        assert contents_span(self.TOC, ["Geleitwort", "Fehlt", "Zwei"], 1) == ""
+
+    def test_empty_title_is_never_found(self) -> None:
+        assert contents_span(self.TOC, ["", "Eins"], 0) == ""
+        assert contents_span(self.TOC, ["", "Eins"], 1).startswith("Eins")
+
+    def test_missing_later_title_is_skipped(self) -> None:
+        assert contents_span(self.TOC, ["Eins", "Fehlt", "Zwei"], 0) == (
+            "Eins 14 Aufsatz (Anna Bauer) 20"
+        )
 
 
 class TestSmallPrintJoins:
