@@ -35,6 +35,8 @@ Lines in fonts foreign to the series (e.g. Helvetica) are OCR layers inside repr
 
 ## Appendix chapters
 
+Author biographies have no hanging indents. A short line or a vertical gap ends a biography. Wrapped heading lines join; headings far apart stay separate. Image credits and index sub-entries are still not split (issue #34).
+
 Each volume's final chapter (*Anhang*) — bibliography, image credits, registers, author notes — uses a different typographic register set almost entirely in small EuclidCircularB. When a chapter contains no body text in the series' body font, the extractor switches to an appendix mode: ~9.5 pt Semibold section headings, ~9 pt intro prose (split on vertical gaps), and ~6.5 pt entries with hanging indents, read column by column.
 
 ## Quality assurance
