@@ -20,6 +20,7 @@ from sgb_html.extract import (
     Marker,
     Paragraph,
     TextRun,
+    contents_span,
     extract_chapter,
     order_authors,
 )
@@ -114,11 +115,23 @@ def _front_matter(volume_pdf_dir: Path) -> str:
         return " ".join(page.get_text().replace("\n", " | ") for page in doc.pages(0, 12))
 
 
+def _contents_of(job: ChapterJob, front_matter: str) -> str:
+    """The printed contents of one chapter: its articles with their authors."""
+    chapters = sorted((ch for ch in job.publication.chapters if ch.doi), key=lambda ch: ch.doi)
+    index = next(i for i, ch in enumerate(chapters) if ch.id == job.chapter.id)
+    return contents_span(front_matter, [_de(ch.title) for ch in chapters], index)
+
+
 def _meta_for(job: ChapterJob, chapter: Chapter, front_matter: str = "") -> ChapterMeta:
     return ChapterMeta(
         title=_de(job.chapter.title),
         subtitle=_de(job.chapter.subtitle),
-        authors=order_authors(job.chapter.author_names, chapter.author_line, front_matter),
+        authors=order_authors(
+            job.chapter.author_names,
+            chapter.author_line,
+            front_matter,
+            contents=_contents_of(job, front_matter),
+        ),
         doi=job.chapter.doi,
         pages=job.chapter.pages or "",
         license_url=job.publication.chapterLicenseUrl,
