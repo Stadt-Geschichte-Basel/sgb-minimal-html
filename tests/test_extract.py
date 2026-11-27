@@ -1121,3 +1121,15 @@ class TestSidebarTitles:
         assert title == Heading("Titel der Box", level=3)
         assert paragraph_text(text) == "Erster Satz der Box."
         assert paragraph_text(author) == "Max Muster"
+
+
+class TestOpenerByline:
+    def test_first_page_byline_is_dropped(self) -> None:
+        page = FakePage(
+            [
+                line(span("Max Muster", "EuclidCircularB-Regular", 8.5), x0=113.0, y0=60),
+                body("Haupttext.", y0=200),
+            ]
+        )
+        chapter = extract_chapter([page])
+        assert all(not isinstance(block, Aside) for block in chapter.blocks)

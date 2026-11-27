@@ -930,6 +930,7 @@ def plan_lines(raw_lines: Sequence[RawLine]) -> LinePlan:
         else:
             classified.append((kind, line))
 
+    classified = _drop_opener_byline(classified)
     classified = _demote_late_leads(classified)
     classified = _promote_subheadings(classified)
     if any(kind in (Kind.BODY, Kind.LEAD) for kind, _ in classified):
@@ -1120,6 +1121,39 @@ def _demote_late_leads(
         result.append((kind, line))
     flush()
     return result
+
+
+_BYLINE_MAX_CHARS = 100
+_BYLINE_MAX_Y = 90.0  # the byline sits at the top of the first page
+
+
+def _drop_opener_byline(
+    classified: list[tuple[Kind, RawLine]],
+) -> list[tuple[Kind, RawLine]]:
+    """Drop the short author line of the chapter's first page.
+
+    The chapter header already shows the authors, so a short sidebar line on the
+    first page only repeats them.
+
+    >>> font = RawSpan("Guido Lassau", "EuclidCircularB-Regular", 8.5)
+    >>> byline = RawLine(1, 113.0, 62.0, (font,))
+    >>> _drop_opener_byline([(Kind.ASIDE_BODY, byline)])
+    []
+    >>> long = RawLine(1, 113.0, 62.0, (RawSpan("x" * 120, "EuclidCircularB-Regular", 8.5),))
+    >>> len(_drop_opener_byline([(Kind.ASIDE_BODY, long)]))
+    1
+    """
+    if not classified:
+        return classified
+    first_page = classified[0][1].page
+    opener = [
+        item
+        for item in classified
+        if item[0] is Kind.ASIDE_BODY and item[1].page == first_page and item[1].y0 < _BYLINE_MAX_Y
+    ]
+    if sum(len(line.text.strip()) for _, line in opener) >= _BYLINE_MAX_CHARS:
+        return classified
+    return [item for item in classified if item not in opener]
 
 
 def _promote_subheadings(
