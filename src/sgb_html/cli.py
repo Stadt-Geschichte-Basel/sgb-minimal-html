@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
+from typing import Annotated
 
 import pymupdf
 import structlog
@@ -31,6 +33,7 @@ from sgb_html.omp import (
     redact_token,
 )
 from sgb_html.render import ChapterMeta, render_chapter
+from sgb_html.review import DEFAULT_DPI, build_pack
 from sgb_html.settings import Settings
 
 app = typer.Typer(add_completion=False, help=__doc__)
@@ -195,6 +198,45 @@ def check() -> None:
         log.error("check_failed", chapters=failures)
         raise typer.Exit(1)
     log.info("check_passed")
+
+
+@app.command(name="review-pack")
+def review_pack(
+    doi: Annotated[str | None, typer.Option(help="DOI suffix, e.g. sgb-08.05-264155.")] = None,
+    all_chapters: Annotated[bool, typer.Option("--all", help="Pack every chapter.")] = False,
+    html: Annotated[Path | None, typer.Option(help="Review this HTML file.")] = None,
+    pdf_dir: Annotated[str, typer.Option(help="Folder with the volume PDFs.")] = "pdf",
+    html_dir: Annotated[str, typer.Option(help="Folder with the generated HTML.")] = "html",
+    out: Annotated[str, typer.Option(help="Output folder for the packs.")] = ".review",
+    dpi: Annotated[int, typer.Option(help="Resolution of the page images.")] = DEFAULT_DPI,
+) -> None:
+    """Build a review pack: ledger, lint, page images and HTML snapshot per chapter."""
+    pdfs = _chapter_pdfs(Path(pdf_dir))
+    if all_chapters:
+        wanted = sorted(pdfs)
+    elif doi:
+        wanted = [doi.removeprefix("10.21255/")]
+    else:
+        raise typer.BadParameter("give --doi or --all")
+    sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=False
+    ).stdout.strip()
+    for suffix in wanted:
+        if suffix not in pdfs:
+            raise typer.BadParameter(f"no PDF for {suffix}")
+        html_path = html or next(Path(html_dir).glob(f"volume-*/{suffix}.html"), None)
+        if html_path is None or not html_path.exists():
+            raise typer.BadParameter(f"no HTML for {suffix}")
+        manifest = build_pack(
+            pdfs[suffix][0], html_path, Path(out) / suffix, doi=suffix, git_sha=sha, dpi=dpi
+        )
+        log.info(
+            "packed",
+            doi=suffix,
+            pages=manifest["pages"],
+            lint_findings=manifest["lint_findings"],
+            word_ratio=manifest["word_ratio"],
+        )
 
 
 # The genre fingerprint every volume on emono follows: the full-volume PDF is the

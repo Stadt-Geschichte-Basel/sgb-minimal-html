@@ -44,6 +44,25 @@ Each volume's final chapter (*Anhang*) — bibliography, image credits, register
 
 The core modules (`extract.py`, `render.py`) are pure functions over span dictionaries and carry **100% test coverage**.
 
+## Manual review with subagents
+
+The extractor is deterministic. An error in one chapter is therefore an error class that can occur in other chapters. A review finds such classes. A person then fixes the extractor and never edits `html/` by hand.
+
+`sgb-html review-pack` builds a review pack for each chapter in `.review/<doi>/`. The folder `.review/` is not under version control. A pack holds:
+
+- `chapter.html`: a copy of the HTML, and `manifest.json`, which records the git commit.
+- `pages/pNN.png`: one image for each PDF page, at 110 dpi.
+- `ledger.tsv`: one row for each PDF line. It shows the role that the extractor gave to the line, and whether it kept the line. The ledger uses the same decision function as `convert`.
+- `lint.json`: static findings, for example a space inside a URL.
+- `diff.json`: candidates from a text comparison of the HTML with the PDF text layer. The comparison finds missing lines, extra text, swapped paragraphs, spaces inside words, and wrong endnotes. A reviewer confirms each candidate against the page image.
+- `blocks.tsv`: an index of the HTML blocks, for locators such as `p#42`.
+
+One Sonnet subagent reviews one chapter. The rubric is in `docs/chapter-review-rubric.md`. The subagent reads the pack and writes only `findings.json` in its own pack folder. Each finding quotes the HTML and the PDF. Each finding has one class from a fixed list.
+
+Before a full run, the review must pass a recall test. A script puts 15 seeded errors into the HTML of three chapters: two body chapters and one appendix chapter. The script chooses errors that lint cannot see, for example a removed paragraph or two swapped endnotes. The review must find at least 80% of them. Use a second set of seeded errors, which nobody used to tune the tools, to confirm the result.
+
+After a full run, a person groups the findings by class. The person checks a sample of each class against the PDF. Each verified class becomes one GitHub issue.
+
 ## Publishing to Open Monograph Press
 
 Each chapter edition is attached to its volume's HTML publication format via the OMP 3.4 REST API (`fileStage=10`, `assocType=521`). Three undocumented quirks of the API matter:

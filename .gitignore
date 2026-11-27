@@ -14,3 +14,6 @@ _site/
 
 /.quarto/
 **/*.quarto_ipynb
+
+# Review packs and findings (reviewer output)
+.review/
